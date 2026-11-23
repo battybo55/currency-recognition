@@ -15,7 +15,7 @@ import numpy as np
 from .segment import order_quad
 
 NOTE_ASPECT = 2.05          # 第五套人民币长宽比 2.00–2.14
-ASPECT_RANGE = (1.45, 2.90)
+ASPECT_RANGE = (1.20, 3.00)   # 折成方形的纸币长宽比会掉到 1.2 附近
 AREA_RANGE = (0.08, 0.95)   # 单张场景：票面通常占画面 40%–80%
 AREA_TARGET = 0.55
 
@@ -52,10 +52,11 @@ def _candidates_from_mask(mask: np.ndarray, src: str, min_area: float) -> list[N
     cs, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     out = []
     for c in cs:
-        area = float(cv2.contourArea(c))
+        hull = cv2.convexHull(c)
+        area = float(cv2.contourArea(hull))
         if area / (h * w) < min_area:
             continue
-        rect = cv2.minAreaRect(c)
+        rect = cv2.minAreaRect(hull)
         rw, rh = rect[1]
         if min(rw, rh) < 12:
             continue
@@ -73,9 +74,12 @@ def candidate_quads(img: np.ndarray) -> list[NoteQuad]:
     h, w = img.shape[:2]
     lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
 
     sources = {
-        "b_inv": 255 - lab[..., 2],
+        "b_inv": 255 - lab[..., 2],   # 蓝色票面（10 元）
+        "a": lab[..., 1],             # 红色票面（100 元）
+        "S": hsv[..., 1],             # 高饱和票面（任意面额，对浅色背景）
         "gray": gray,
         "edge": None,
     }
@@ -95,6 +99,9 @@ def candidate_quads(img: np.ndarray) -> list[NoteQuad]:
         else:
             blur = cv2.GaussianBlur(ch, (5, 5), 0)
             _, mask = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            # 低对比场景（如粉色纸币贴浅色桌面）Otsu 会饱和成全前景，取反重试
+            if mask.mean() > 0.90 * 255:
+                mask = 255 - mask
             mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((11, 11), np.uint8))
         quads.extend(_candidates_from_mask(mask, name, 0.03))
     return quads
