@@ -1,0 +1,72 @@
+# 基线配置：v0.1
+# 约定：所有以像素为单位的参数都写成相对于图像短边的比例，换分辨率时不改配置。
+
+seed: 42
+
+image:
+  long_side: 1000          # 长边缩放目标（像素）
+  keep_aspect: true
+  interpolation: area      # area | linear | cubic
+
+preprocess:
+  white_balance: none      # none | gray_world | white_ref
+  denoise:
+    banknote: bilateral    # bilateral | median | gaussian
+    coin: median
+  clahe:
+    enabled: false
+    clip_limit: 2.0
+    tile_grid: [8, 8]
+
+banknote:
+  binarize: otsu           # otsu | adaptive | canny_close
+  corner_method: best_of   # approx_poly | min_area_rect | best_of
+  output_size: [512, 256]  # 透视校正后的标准尺寸（宽, 高）
+  min_area_ratio: 0.02     # 小于画面该比例的连通域丢弃
+
+coin:
+  detector: hough          # hough | watershed | fuse
+  radius_ratio: [0.03, 0.08]   # 相对图像短边
+  hough:
+    dp: 1.2
+    min_dist_ratio: 0.05
+    param1: 100
+    param2: 30
+  watershed:
+    min_distance_ratio: 0.05
+    min_area_ratio: 0.004
+
+feature:
+  color:
+    space: lab             # lab | hsv
+    bins: 32
+    moments: true
+  lbp:
+    settings: [[8, 1], [16, 2]]
+  glcm:
+    distances: [1, 2, 4]
+    angles: [0, 45, 90, 135]
+  gabor:
+    scales: 4
+    orientations: 6
+  geometry:
+    enabled: true
+  frequency:
+    dft_bins: 16
+    dct_ratio: 0.2
+
+classifier:
+  model: svm               # svm | rf | knn | lr
+  svm:
+    C: 1.0
+    gamma: scale
+    kernel: rbf
+  rf:
+    n_estimators: 200
+  knn:
+    k: 5
+
+eval:
+  folds: 5
+  split_file: data/annotations/splits.json
+  metrics: [accuracy, macro_f1, confusion_matrix]

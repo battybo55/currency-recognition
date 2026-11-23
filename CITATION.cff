@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use this project or its experimental protocol, please cite it as below."
+title: "纸币与硬币识别：基于经典图像处理的可解释管线"
+abstract: >-
+  数字图像处理课程设计。以单张手机俯拍图为输入，通过分割、几何校正、
+  颜色与纹理特征及浅层分类器，实现人民币纸币面额识别与硬币检测计数，
+  并以单变量消融实验量化各处理环节的贡献。
+authors:
+  - family-names: "刘"
+    given-names: "德城"
+version: 0.1.0
+date-released: 2026-11-23
+license: MIT
+keywords:
+  - image processing
+  - banknote recognition
+  - coin detection
+  - feature extraction
+  - opencv

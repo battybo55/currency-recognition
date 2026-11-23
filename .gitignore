@@ -1,0 +1,39 @@
+# ---- 数据：本仓库不托管任何图像 ----
+data/*
+!data/README.md
+data/**/*.jpg
+data/**/*.jpeg
+data/**/*.png
+data/**/*.bmp
+
+# 私有凭据（Kaggle token 等）
+_private/
+.env
+*.local
+
+# 运行中间产物
+processed/
+augmented/
+cache/
+*.log
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# 编辑器与系统
+.vscode/settings.json
+.idea/
+.DS_Store
+Thumbs.db
+~$*
+
+# 临时与大文件
+*.zip
+*.7z
+*.tar.gz

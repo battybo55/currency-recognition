@@ -1,0 +1,15 @@
+# 运行环境：Python 3.13（3.14 无 opencv-python wheel）
+# 安装：pip install -r requirements.txt
+
+opencv-python==5.0.0      # 若该版本不可获取，改用 opencv-python>=4.10,<6
+numpy==2.5.4
+scipy==1.18.1
+scikit-image==0.26.0
+scikit-learn==1.9.1
+matplotlib==3.11.2
+pillow==13.0.0
+pandas==3.1.1
+PyYAML==6.0.3
+
+# 数据获取（可选，仅脚本需要）
+kaggle==2.2.5
