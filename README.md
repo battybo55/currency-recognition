@@ -141,6 +141,8 @@ python scripts/exp_features.py --per-class 40                  # E4 / E5
 
 ![PCA 与 t-SNE](results/figures/pca_tsne.png)
 
+**已知限制**：5 张实拍图的冒烟测试中，纸币张数正确 1/5、硬币枚数正确 0/5。主要失效是木纹桌面上 Otsu 把纸币与硬币并成一团，以及折角纸币的矩形度不足。外部数据上的 0.96 准确率对真实场景没有预测力——详见 [`docs/validation_log.md`](docs/validation_log.md) 的「自采冒烟测试」一节，解决方案是固定机位 + 空景照做背景差分。
+
 ## 9. 可复现约定
 
 1. 固定随机种子（默认 42），写入 `configs/`；

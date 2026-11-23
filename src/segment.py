@@ -30,6 +30,80 @@ def order_quad(points: np.ndarray) -> np.ndarray:
     )
 
 
+def _quad_iou(a: np.ndarray, b: np.ndarray) -> float:
+    """用外接矩形近似计算两个四边形的 IoU，用于跨掩膜去重。"""
+    ra = cv2.boundingRect(np.asarray(a, np.float32).astype(np.int32))
+    rb = cv2.boundingRect(np.asarray(b, np.float32).astype(np.int32))
+    ax, ay, aw, ah = ra
+    bx, by, bw, bh = rb
+    x1, y1 = max(ax, bx), max(ay, by)
+    x2, y2 = min(ax + aw, bx + bw), min(ay + ah, by + bh)
+    inter = max(0, x2 - x1) * max(0, y2 - y1)
+    union = aw * ah + bw * bh - inter
+    return inter / union if union > 0 else 0.0
+
+
+def find_banknote_quads(
+    image: np.ndarray,
+    min_area_ratio: float = 0.02,
+    aspect_range=(1.15, 3.2),
+    min_rectangularity: float = 0.80,
+    max_per_mask: int = 6,
+    iou_thresh: float = 0.35,
+) -> list[tuple[np.ndarray, str, float]]:
+    """返回图中全部候选纸币四边形 [(quad, method, area_ratio), ...]，按面积降序。
+
+    与 v2 的区别：不再只取第一个，而是遍历每个掩膜的前若干个轮廓，
+    跨掩膜按外接矩形 IoU 去重。用于多张纸币同框的真实场景。
+    """
+    h, w = image.shape[:2]
+    gray = cv2.GaussianBlur(to_gray(image), (5, 5), 0)
+    k = max(3, int(min(h, w) * 0.01))
+    kernel = np.ones((k, k), np.uint8)
+
+    masks = [("otsu", binary_foreground(gray)), ("edge", foreground_mask_edge(gray))]
+    found: list[tuple[np.ndarray, str, float]] = []
+
+    for mask_name, mask in masks:
+        m = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+        contours, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            continue
+        contours = sorted(contours, key=cv2.contourArea, reverse=True)[: max_per_mask * 3]
+
+        for c in contours:
+            area = float(cv2.contourArea(c))
+            ratio = area / (h * w)
+            if ratio < min_area_ratio:
+                continue
+
+            rect = cv2.minAreaRect(c)
+            rw, rh = rect[1]
+            if min(rw, rh) <= 2:
+                continue
+            aspect = max(rw, rh) / max(min(rw, rh), 1e-6)
+            if not (aspect_range[0] <= aspect <= aspect_range[1]):
+                continue
+            if area / max(rw * rh, 1e-6) < min_rectangularity:
+                continue
+
+            peri = cv2.arcLength(c, True)
+            approx = cv2.approxPolyDP(c, 0.02 * peri, True)
+            if len(approx) == 4:
+                quad, kind = order_quad(approx.reshape(4, 2)), "approx"
+            else:
+                quad, kind = order_quad(cv2.boxPoints(rect)), "rect"
+
+            if any(_quad_iou(quad, q) > iou_thresh for q, _, _ in found):
+                continue
+            found.append((quad, f"{mask_name}:{kind}", ratio))
+            if sum(1 for _, mth, _ in found if mth.startswith(mask_name)) >= max_per_mask:
+                break
+
+    found.sort(key=lambda t: -t[2])
+    return found
+
+
 def find_banknote_quad_v2(
     image: np.ndarray,
     min_area_ratio: float = 0.02,

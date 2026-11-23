@@ -19,6 +19,8 @@
 ### Changed
 - `LICENSE` 改为纯 MIT 文本。原先附在末尾的范围声明会让 GitHub 识别为 `NOASSERTION`；该声明已并入 README 第 11 节。
 - `find_banknote_quad_v2` 改用矩形度 + 边缘掩膜兜底，定位成功率由 38.5% 提升到 68.5%。
+- 纸币定位改为多候选（`find_banknote_quads` + 跨掩膜 IoU 去重），支持同框多张。
+- 硬币剔除增加「可信纸币」守卫：长宽比 1.5–2.8 的四边形才用于排除，避免合并区域误删真硬币。
 
 ### Planned
 - 自采人民币数据与标注（M2）

@@ -18,7 +18,7 @@ from .io_utils import imread_unicode
 from .preprocess import resize_long_side
 from .segment import (
     detect_coins_multiscale,
-    find_banknote_quad_v2,
+    find_banknote_quads,
     warp_quad,
 )
 
@@ -46,6 +46,14 @@ def _features(image: np.ndarray, size=(512, 256)) -> np.ndarray:
     return np.concatenate([color_features(small), lbp_features(small)])[None, :]
 
 
+def _note_like(quad: np.ndarray, area_ratio: float) -> bool:
+    """四边形是否像一张纸币：长宽比 1.5–2.8，且面积占比不超过 0.75。"""
+    q = np.asarray(quad, np.float32)
+    sides = [np.linalg.norm(q[i] - q[(i + 1) % 4]) for i in range(4)]
+    aspect = max(sides) / max(min(sides), 1e-6)
+    return 1.5 <= aspect <= 2.8 and 0.01 <= area_ratio <= 0.75
+
+
 def analyze(
     image_path: str | Path,
     cfg: dict | None = None,
@@ -63,10 +71,12 @@ def analyze(
     overlay = img.copy() if draw else None
 
     # 纸币先定位，用于把硬币检测从票面区域里排除
-    quad, method, area_ratio, found = find_banknote_quad_v2(
+    quads = find_banknote_quads(
         img,
         min_area_ratio=cfg["banknote"]["min_area_ratio"],
+        min_rectangularity=cfg["banknote"].get("min_rectangularity", 0.80),
     )
+    found = bool(quads)
 
     # 硬币
     circles = detect_coins_multiscale(
@@ -77,15 +87,19 @@ def analyze(
     )
     if found and len(circles):
         # 票面上的圆形花纹（国徽、印章、水印圈）会被误当成硬币，
-        # 这里把落在纸币四边形内的候选剔除，除非它明显大于票面内的图案。
+        # 这里把落在「可信纸币」四边形内的候选剔除。
+        # 注意：木纹桌面上 Otsu 常把纸币与硬币并成一团，产出的四边形
+        # 长宽比不像纸币，若拿它去排除硬币会连真硬币一起删掉，
+        # 所以只在四边形长得像纸币（长宽比 1.5–2.8、面积占比合理）时才排除。
         short = min(img.shape[:2])
-        poly = quad.astype(np.float32)
-        circles = np.asarray(
-            [c for c in circles
-             if not (cv2.pointPolygonTest(poly, (float(c[0]), float(c[1])), False) >= 0
-                     and c[2] < 0.35 * short)],
-            dtype=np.float32,
-        ).reshape(-1, 3)
+        polys = [q.astype(np.float32) for q, _, r in quads if _note_like(q, r)]
+        if polys:
+            circles = np.asarray(
+                [c for c in circles
+                 if not (any(cv2.pointPolygonTest(p, (float(c[0]), float(c[1])), False) >= 0 for p in polys)
+                         and c[2] < 0.35 * short)],
+                dtype=np.float32,
+            ).reshape(-1, 3)
 
     coins = [{"denomination": None, "center": [round(float(x), 1) + 0.0, round(float(y), 1) + 0.0],
               "radius": round(float(r), 1), "score": None} for x, y, r in circles]
@@ -94,7 +108,7 @@ def analyze(
             cv2.circle(overlay, (int(x), int(y)), int(r), (0, 200, 255), 2)
 
     banknotes = []
-    if found:
+    for quad, method, area_ratio in quads:
         warped = warp_quad(img, quad, tuple(cfg["banknote"]["output_size"]))
         label, score = None, None
         if banknote_model is not None:
@@ -122,7 +136,8 @@ def analyze(
         "total": total,
         "low_confidence": bool(not found or banknote_model is None or len(coins) > 0),
         "debug": {
-            "method": method,
+            "method": quads[0][1] if quads else "none",
+            "banknote_count": len(banknotes),
             "coin_count": len(coins),
             "elapsed_ms": round((time.perf_counter() - t0) * 1000, 1),
             "model": None if banknote_model is None else type(banknote_model).__name__,

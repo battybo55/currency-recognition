@@ -23,6 +23,7 @@ banknote:
   corner_method: best_of   # approx_poly | min_area_rect | best_of
   output_size: [512, 256]  # 透视校正后的标准尺寸（宽, 高）
   min_area_ratio: 0.02     # 小于画面该比例的连通域丢弃
+  min_rectangularity: 0.70 # 矩形度下限；0.80 会漏掉折角纸币（实拍图实测）
 
 coin:
   detector: hough          # hough | watershed | fuse
