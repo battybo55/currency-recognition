@@ -9,6 +9,8 @@
 - `src/classify.py`：标准化 + SVM/RF/kNN/LR 的统一构造
 - `scripts/exp_banknote.py`：E0（整图）与 E2（四角校正）对照实验
 - `scripts/exp_features.py`：E4 特征消融与 E5 分类器对比，分层 5 折交叉验证
+- `scripts/viz_features.py`：PCA / t-SNE 可分性可视化
+- `scripts/slice_coins.py`：按真值密度与图像尺度做误差切片
 
 ### Changed
 - `LICENSE` 改为纯 MIT 文本。原先附在末尾的范围声明会让 GitHub 识别为 `NOASSERTION`；该声明已并入 README 第 11 节。

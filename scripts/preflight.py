@@ -27,6 +27,10 @@ FORBIDDEN_EXT = {
     ".mp4", ".avi", ".mov", ".gif",
 }
 ALLOW_NAMES = {"data/README.md"}
+# 只放行自绘的统计图（散点、混淆矩阵等），且限 500 KB；
+# 原始票币照片一律拦截，不含例外。
+ALLOW_FIGURE = re.compile(r"^results/figures/[\w.\-]+\.png$")
+FIGURE_MAX_BYTES = 500 * 1024
 
 PATTERNS = [
     ("绝对路径", re.compile(r"[A-Za-z]:[\\/](?:Users|杂物|workbuddy|Windows)", re.I)),
@@ -70,10 +74,13 @@ def main() -> None:
             continue
         if rel in ALLOW_NAMES:
             continue
-        if p.suffix.lower() in FORBIDDEN_EXT:
-            blocked.append(f"{rel}（数据/媒体文件不入库）")
-            continue
         size = p.stat().st_size
+        if p.suffix.lower() in FORBIDDEN_EXT:
+            if ALLOW_FIGURE.match(rel) and size <= FIGURE_MAX_BYTES:
+                pass
+            else:
+                blocked.append(f"{rel}（数据/媒体文件不入库）")
+                continue
         if size > 50 * 1024 * 1024:
             blocked.append(f"{rel}（{size / 1e6:.1f} MB，超过 GitHub 上限）")
         elif size > 2 * 1024 * 1024:

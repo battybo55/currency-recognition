@@ -109,8 +109,12 @@ python scripts/run_all.py --config configs/baseline.yaml
 | E2 纸币分割对比 | 待填 | macro-F1 | 待填 | Otsu / 自适应 / Canny |
 | E4 特征消融 | DS04 Indian / 400 张，5 折 | accuracy | 颜色 0.975；颜色+四族 0.965 | 累加无增益，颜色已近饱和 |
 | E5 分类器对比 | 同上，203 维 | accuracy | LR 0.980 / RF 0.975 / SVM 0.965 / kNN 0.948 | 差异小于特征族差异 |
-| E6 鲁棒性切片 | 待填 | macro-F1 | 待填 | 按光照/角度/重叠率 |
+| E6 硬币切片（密度/尺度） | DS07 / 400 张 | 计数 F1 | 4–10 枚 0.841；单枚 0.514；短边>600 0.691 | 失效模式为「特写过检」 |
 | 端到端金额 | 待填 | 完全正确率 | 待填 | 钞币混排 |
+
+特征可分性（颜色 + LBP，130 维，400 张）：PCA 二维投影重叠严重，t-SNE 十类基本分离——高维可分、线性不可分。
+
+![PCA 与 t-SNE](results/figures/pca_tsne.png)
 
 ## 9. 可复现约定
 
