@@ -5,6 +5,8 @@
 ## [Unreleased]
 
 ### Added
+- `src/background.py`：背景色 k-means 检测（边框占比判定）+ 分块噪声归一化剔除，兼容背景不均与光照渐变
+- `src/rmb.py`：人民币面额规则模型（票幅/主色调/暖色比例 + 置信度门限），只对实测原型判别
 - `src/pipeline.py`：端到端分析入口，输出 README 约定的 JSON 结构
 - `src/scene.py`：场景自适应前景提取（边框颜色模型 + 边缘线索融合 + 分水岭拆分），不依赖固定背景模板
 - `src/denomination.py` 与 `scripts/calibrate_denomination.py`：色度原型的面额判别与标定流程

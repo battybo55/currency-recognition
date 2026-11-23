@@ -29,12 +29,19 @@ def main() -> None:
     ap.add_argument("--image", required=True)
     ap.add_argument("--model", default="")
     ap.add_argument("--denom", default="", help="面额原型配置，如 configs/denomination_indian.yaml")
+    ap.add_argument("--rmb", action="store_true", help="使用人民币规则面额模型")
     ap.add_argument("--engine", default="legacy", choices=["legacy", "scene"])
     ap.add_argument("--draw", action="store_true", help="在 data/raw/_evidence/demo 下保存标注图")
     args = ap.parse_args()
 
     model = joblib.load(ROOT / args.model) if args.model else None
-    dcfg = load_denom(ROOT / args.denom) if args.denom else None
+    if args.rmb:
+        from src.rmb import RMBConfig
+        dcfg = RMBConfig()
+    elif args.denom:
+        dcfg = load_denom(ROOT / args.denom)
+    else:
+        dcfg = None
     cfg = load_config()
     result, overlay = analyze(
         args.image, cfg, banknote_model=model, draw=args.draw,

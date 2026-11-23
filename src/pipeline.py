@@ -64,9 +64,11 @@ def _analyze_scene(
 ):
     """场景自适应路径：前景提取后按形状分纸币/硬币，再逐个判面额。"""
     from .denomination import classify_coin, classify_note
+    from .rmb import classify_coin_rmb, classify_rmb
     from .scene import SceneConfig, extract_objects
 
     cfg = cfg or load_config()
+    is_rmb = getattr(denom_cfg, "kind", "") == "rmb"
     t0 = time.perf_counter()
     img = imread_unicode(image_path)
     if img is None:
@@ -75,7 +77,7 @@ def _analyze_scene(
     overlay = img.copy() if draw else None
 
     objs, mask, residual = extract_objects(img, SceneConfig())
-    banknotes, coins = [], []
+    banknotes, coin_items, coins = [], [], []
 
     for o in objs:
         if o["kind"] == "note":
@@ -83,41 +85,54 @@ def _analyze_scene(
             quad = order_quad(cv2.boxPoints(rect))
             warped = warp_quad(img, quad, tuple(cfg["banknote"]["output_size"]))
             label = score = None
+            value = None
+            extra = {}
             if banknote_model is not None:
                 proba = banknote_model.predict_proba(_features(warped))[0]
                 idx = int(np.argmax(proba))
                 label, score = str(banknote_model.classes_[idx]), round(float(proba[idx]), 3)
+                value = label_to_value(label)
             elif denom_cfg is not None:
-                r = classify_note(warped, denom_cfg)
-                label, score = r["label"], r["confidence"]
+                r = classify_rmb(warped, denom_cfg) if is_rmb else classify_note(warped, denom_cfg)
+                label, score, value = r["label"], r["confidence"], r.get("value")
+                extra = {"candidates": r.get("candidates", []), "features": r.get("features")}
             banknotes.append({
-                "denomination": label_to_value(label) if label else None,
+                "denomination": value,
                 "label": label,
                 "quad": [[round(float(x), 1), round(float(y), 1)] for x, y in quad],
                 "score": score,
                 "area_ratio": round(float(o["area_ratio"]), 3),
+                **extra,
             })
             if draw:
                 cv2.polylines(overlay, [quad.astype(np.int32)], True, (0, 255, 0), 3)
         else:
             x, y, w, h = o["bbox"]
-            roi = img[y:y + h, x:x + w]
-            cmask = o["mask"][y:y + h, x:x + w]
-            r = {"value": None, "label": None, "confidence": 0.0, "candidates": []}
-            if denom_cfg is not None:
-                r = classify_coin(roi, cmask, denom_cfg)
-            cx, cy = x + w / 2, y + h / 2
-            coins.append({
-                "denomination": r["value"],
-                "label": r["label"],
-                "center": [round(cx, 1), round(cy, 1)],
-                "radius": round(max(cv2.minAreaRect(o["contour"])[1]) / 2, 1),
-                "score": r["confidence"],
-                "candidates": r.get("candidates", []),
+            coin_items.append({
+                "bbox": o["bbox"],
+                "roi": img[y:y + h, x:x + w],
+                "mask": o["mask"][y:y + h, x:x + w],
+                "radius": float(max(cv2.minAreaRect(o["contour"])[1]) / 2),
+                "contour": o["contour"],
             })
-            if draw:
-                cv2.circle(overlay, (int(cx), int(cy)), int(max(cv2.minAreaRect(o["contour"])[1]) / 2),
-                           (0, 200, 255), 2)
+
+    radii = [c["radius"] for c in coin_items]
+    for c in coin_items:
+        r = {"value": None, "label": None, "confidence": 0.0, "candidates": []}
+        if denom_cfg is not None:
+            r = (classify_coin_rmb(c["roi"], c["mask"], radii)
+                 if is_rmb else classify_coin(c["roi"], c["mask"], denom_cfg))
+        x, y, w, h = c["bbox"]
+        coins.append({
+            "denomination": r["value"],
+            "label": r["label"],
+            "center": [round(x + w / 2, 1), round(y + h / 2, 1)],
+            "radius": round(c["radius"], 1),
+            "score": r["confidence"],
+            "candidates": r.get("candidates", []),
+        })
+        if draw:
+            cv2.circle(overlay, (int(x + w / 2), int(y + h / 2)), int(c["radius"]), (0, 200, 255), 2)
 
     values = [b["denomination"] for b in banknotes] + [c["denomination"] for c in coins]
     total = float(sum(v for v in values if v is not None)) if all(v is not None for v in values) else None
@@ -132,7 +147,7 @@ def _analyze_scene(
             "banknote_count": len(banknotes),
             "coin_count": len(coins),
             "elapsed_ms": round((time.perf_counter() - t0) * 1000, 1),
-            "model": "trained" if banknote_model is not None else ("prototype" if denom_cfg else None),
+            "model": "trained" if banknote_model is not None else ("rmb_rules" if is_rmb else ("prototype" if denom_cfg else None)),
         },
     }
     return result, overlay

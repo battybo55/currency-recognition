@@ -19,6 +19,13 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
+from .background import (
+    BackgroundModel,
+    detect_background,
+    normalized_residual,
+    tile_sigma,
+)
+
 
 @dataclass
 class SceneConfig:
@@ -26,6 +33,8 @@ class SceneConfig:
 
     border_ratio: float = 0.06      # 边框取样带宽 / 短边
     use_edge_cue: bool = True       # 是否融合边缘线索
+    grid: tuple = (4, 3)            # 分块噪声网格（背景不均时按块归一化）
+    sigma_k: float = 4.0            # 前景阈值：背景噪声的倍数
     residual_gain: float = 1.6      # 色差对比度拉伸
     min_area_ratio: float = 0.0015  # 目标最小面积占比
     max_area_ratio: float = 0.85    # 超过视为整幅
@@ -40,6 +49,7 @@ class SceneConfig:
     coin_max_area: float = 0.06
     coin_circularity: float = 0.55
     coin_fill: float = 0.70
+    merge_notes: bool = True        # 合并被折痕切开的同一张纸币
 
 
 def _odd(v: float, lo: int = 3) -> int:
@@ -48,27 +58,27 @@ def _odd(v: float, lo: int = 3) -> int:
 
 
 def border_reference_colors(bgr: np.ndarray, cfg: SceneConfig) -> np.ndarray:
-    """四条边框带的中位色（Lab），返回 (4,3)。"""
-    h, w = bgr.shape[:2]
-    band = max(3, int(min(h, w) * cfg.border_ratio))
-    lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB).astype(np.float32)
-    strips = [
-        lab[:band, :].reshape(-1, 3),
-        lab[-band:, :].reshape(-1, 3),
-        lab[:, :band].reshape(-1, 3),
-        lab[:, -band:].reshape(-1, 3),
-    ]
-    return np.stack([np.median(s, axis=0) for s in strips]).astype(np.float32)
+    """兼容旧接口：返回检测到的背景色（Lab）。"""
+    model = detect_background(bgr, border_ratio=cfg.border_ratio)
+    return model.colors
+
+
+def background_model(bgr: np.ndarray, cfg: SceneConfig | None = None) -> BackgroundModel:
+    """检测背景色并估计分块噪声（供 main pipeline 检查背景类型）。"""
+    cfg = cfg or SceneConfig()
+    model = detect_background(bgr, grid=cfg.grid, border_ratio=cfg.border_ratio)
+    model.tile_sigma = tile_sigma(bgr, model, cfg.grid)
+    return model
 
 
 def background_residual(bgr: np.ndarray, cfg: SceneConfig | None = None) -> np.ndarray:
-    """到最近背景参考色的 Lab 距离，归一到 0–255。"""
+    """到背景色的 Lab 距离（未归一化），归一到 0–255 供可视化。"""
     cfg = cfg or SceneConfig()
-    lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB).astype(np.float32)
-    refs = border_reference_colors(bgr, cfg)
-    d = np.min(np.linalg.norm(lab[:, :, None, :] - refs[None, None, :, :], axis=3), axis=2)
-    d = np.clip(d * cfg.residual_gain, 0, 255).astype(np.uint8)
-    return cv2.GaussianBlur(d, (3, 3), 0)
+    model = detect_background(bgr, grid=cfg.grid, border_ratio=cfg.border_ratio)
+    d = np.min(np.linalg.norm(
+        cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB).astype(np.float32)[:, :, None, :]
+        - model.colors[None, None, :, :], axis=3), axis=2)
+    return np.clip(d * cfg.residual_gain, 0, 255).astype(np.uint8)
 
 
 def edge_mask(bgr: np.ndarray, cfg: SceneConfig | None = None) -> np.ndarray:
@@ -95,15 +105,27 @@ def edge_mask(bgr: np.ndarray, cfg: SceneConfig | None = None) -> np.ndarray:
 
 
 def foreground_mask(bgr: np.ndarray, cfg: SceneConfig | None = None) -> tuple[np.ndarray, np.ndarray]:
-    """返回 (掩膜, 响应图)。掩膜 0/255。"""
+    """返回 (掩膜, 响应图)。掩膜 0/255。
+
+    阈值单位是「背景噪声的倍数」（sigma），不是绝对灰度差——
+    所以光照变化、背景不均时不需要改参数。
+    """
     cfg = cfg or SceneConfig()
-    residual = background_residual(bgr, cfg)
-    h, w = residual.shape[:2]
+    model = detect_background(bgr, grid=cfg.grid, border_ratio=cfg.border_ratio)
+    model.tile_sigma = tile_sigma(bgr, model, cfg.grid)
+    z = normalized_residual(bgr, model)
+    h, w = z.shape[:2]
     short = min(h, w)
 
-    thr, mask = cv2.threshold(residual, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    if thr < 8:  # 响应整体很弱：空场景或无对比目标
-        return np.zeros_like(mask), residual
+    residual = np.clip(z * 32, 0, 255).astype(np.uint8)
+    if float(z.max()) < cfg.sigma_k:
+        return np.zeros((h, w), np.uint8), residual
+
+    zu = np.clip(z * 16, 0, 255).astype(np.uint8)
+    thr_otsu, _ = cv2.threshold(zu, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    # 取「噪声倍数下限」与 Otsu 的较大者：纹理背景上 Otsu 会压得很低，导致满屏前景
+    thr = max(cfg.sigma_k * 16, float(thr_otsu))
+    mask = np.where(zu >= thr, 255, 0).astype(np.uint8)
 
     k_open = _odd(short * cfg.open_ratio)
     k_close = _odd(short * cfg.close_ratio)
@@ -184,6 +206,56 @@ def classify_component(contour: np.ndarray, image_shape: tuple[int, int], cfg: S
     }
 
 
+def _bbox_gap(a, b) -> float:
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    dx = max(0, max(ax - (bx + bw), bx - (ax + aw)))
+    dy = max(0, max(ay - (by + bh), by - (ay + ah)))
+    return float(np.hypot(dx, dy))
+
+
+def _merge_objects(objects: list[dict], cfg: SceneConfig, image_shape: tuple[int, int]) -> list[dict]:
+    """合并被折痕或阴影切开的同一张纸币。
+
+    判据：两个候选间隙很小，且合并后的外接框长宽比落在纸币区间、
+    面积仍小于单张纸币上限。硬币不参与合并。
+    """
+    h, w = image_shape
+    diag = float(np.hypot(h, w))
+    merged = True
+    objs = objects
+    while merged:
+        merged = False
+        for i in range(len(objs)):
+            for j in range(i + 1, len(objs)):
+                a, b = objs[i], objs[j]
+                if a["kind"] != "note" or b["kind"] != "note":
+                    continue
+                if _bbox_gap(a["bbox"], b["bbox"]) > 0.02 * diag:
+                    continue
+                ax, ay, aw, ah = a["bbox"]
+                bx, by, bw, bh = b["bbox"]
+                ux, uy = min(ax, bx), min(ay, by)
+                uw, uh = max(ax + aw, bx + bw) - ux, max(ay + ah, by + bh) - uy
+                aspect = max(uw, uh) / max(min(uw, uh), 1e-6)
+                if not (cfg.note_aspect[0] <= aspect <= cfg.note_aspect[1]):
+                    continue
+                if (uw * uh) / (h * w) > 0.35:
+                    continue
+                mask = cv2.bitwise_or(a["mask"], b["mask"])
+                cs, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                c = max(cs, key=cv2.contourArea)
+                info = classify_component(c, (h, w), cfg)
+                info.update({"contour": c, "mask": mask, "bbox": cv2.boundingRect(c),
+                             "area_ratio": float(cv2.contourArea(c)) / (h * w)})
+                objs = [o for k, o in enumerate(objs) if k not in (i, j)] + [info]
+                merged = True
+                break
+            if merged:
+                break
+    return objs
+
+
 def extract_objects(
     bgr: np.ndarray,
     cfg: SceneConfig | None = None,
@@ -234,4 +306,7 @@ def extract_objects(
             objects.append(info)
 
     objects.sort(key=lambda o: -o["area"])
+    if cfg.merge_notes and len(objects) > 1:
+        objects = _merge_objects(objects, cfg, (h, w))
+        objects.sort(key=lambda o: -o["area"])
     return objects, mask, residual

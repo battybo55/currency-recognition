@@ -50,7 +50,9 @@
 ├─ requirements.txt
 ├─ configs/                # 每组实验一个 yaml
 ├─ src/                    # 预处理 / 分割 / 特征 / 分类 / 评测
+│  ├─ background.py        # 背景色检测与按噪声归一化的剔除
 │  ├─ scene.py             # 场景自适应前景提取（无模板）
+│  ├─ rmb.py               # 人民币票幅/主色调规则面额判别
 │  └─ denomination.py      # 色度原型面额判别 + 标定
 ├─ scripts/                # 验证与诊断入口（validate_v3 / diagnose_v3）
 ├─ data/                   # 仅 README；图像不入库
@@ -82,7 +84,7 @@ python scripts/train_banknote.py --per-class 40
 python scripts/run_demo.py --image data/raw/_demo/sample.jpg \
     --model models/demo_indian.joblib --draw
 # 3b) 场景自适应引擎：木纹、布纹等纹理背景用这个
-python scripts/run_demo.py --image data/raw/self/s03.jpg --engine scene --draw
+python scripts/run_demo.py --image data/raw/self/s03.jpg --engine scene --rmb --draw
 # 4) 复现实验
 python scripts/validate_v3.py                                  # V3 流程验证
 python scripts/sweep_circle_support.py --n 400                 # 硬币阈值扫描
