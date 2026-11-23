@@ -130,6 +130,16 @@ python scripts/run_all.py --config configs/baseline.yaml
 
 代码与文档采用 [MIT License](LICENSE)。该许可**不覆盖**任何第三方数据集、票币图像或人民币图样。引用信息见 [`CITATION.cff`](CITATION.cff)。
 
-## 12. 致谢
+## 12. 发布
+
+本地已是 git 仓库（`main` 分支，标签 `v0.1.0`）。推送步骤与首推检查见 [`docs/publish.md`](docs/publish.md)；提交前先跑自检：
+
+```bash
+python scripts/preflight.py --all
+```
+
+CI 在每次 push 时执行语法检查与同一套自检（`.github/workflows/ci.yml`）。
+
+## 13. 致谢
 
 早期调研参考了 `microsoft/banknote-net`、`igortopcin/banknote-recog`、`djeada/Coin-Detection` 等开源项目，具体条目与借鉴点见技术方案第 9 节。
