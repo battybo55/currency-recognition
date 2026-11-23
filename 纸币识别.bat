@@ -1,0 +1,10 @@
+@echo off
+chcp 65001 >nul
+setlocal
+cd /d "%~dp0"
+
+set "PY=%~dp0..\.venv\Scripts\python.exe"
+if not exist "%PY%" set "PY=python"
+
+start "" "%PY%" scripts\gui.py
+endlocal
