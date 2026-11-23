@@ -46,7 +46,7 @@ class RMBConfig:
     kind: str = "rmb"
     prototypes: list[RMBProto] = field(default_factory=lambda: [
         RMBProto(1, (130, 63), "橄榄绿", -10.9, 8.2, 0.02, measured=True),
-        RMBProto(5, (135, 63), "紫", 8, -2, 0.45),
+        RMBProto(5, (135, 63), "紫", 5.0, -2.2, 0.29, measured=True),  # 渲染图标定，待实拍复核
         RMBProto(10, (140, 70), "蓝黑", -4.4, -16.3, 0.06, measured=True),
         RMBProto(20, (145, 70), "棕", 4.6, 11.5, 0.28, measured=True),
         RMBProto(50, (150, 70), "绿", -17.7, -5.3, 0.02, measured=True),
