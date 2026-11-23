@@ -111,9 +111,13 @@ class App:
         self.root.update_idletasks()
 
         try:
+            env = os.environ.copy()
+            env["PYTHONUTF8"] = "1"
+            env["PYTHONIOENCODING"] = "utf-8"
             proc = subprocess.run(
                 [str(VENV_PY), str(DEMO), "--image", str(self.path), "--save", str(self.tmp)],
-                capture_output=True, text=True, encoding="utf-8", timeout=180)
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                env=env, timeout=180)
         except subprocess.TimeoutExpired:
             self.status.config(text="识别超时")
             return
