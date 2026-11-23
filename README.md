@@ -72,17 +72,42 @@ pip install -r requirements.txt
 
 ## 6. 快速开始
 
-> 算法模块尚未落地，以下命令在 M3 完成后可用；当前仅完成环境与数据结构。
-
 ```bash
-# 1) 将数据放入 data/raw/（见 data/README.md），无需提交
-# 2) 生成固定划分
-python scripts/make_splits.py --config configs/baseline.yaml
-# 3) 跑单图端到端
-python -m src.pipeline --image data/raw/demo.jpg --config configs/baseline.yaml
-# 4) 复现实验表
-python scripts/run_all.py --config configs/baseline.yaml
+# 1) 数据放到 data/raw/（见 data/README.md），不入库
+# 2) 训练面额分类器（当前用外部数据，仅作管线演示）
+python scripts/train_banknote.py --per-class 40
+# 3) 单图端到端，输出 JSON 与标注图
+python scripts/run_demo.py --image data/raw/_demo/sample.jpg \
+    --model models/demo_indian.joblib --draw
+# 4) 复现实验
+python scripts/validate_v3.py                                  # V3 流程验证
+python scripts/sweep_circle_support.py --n 400                 # 硬币阈值扫描
+python scripts/exp_banknote.py --per-class 20                  # E0 / E2
+python scripts/exp_features.py --per-class 40                  # E4 / E5
 ```
+
+模型文件（`models/*.joblib`）不入库：它依赖训练数据，且当前版本是用印度卢比训练的，**不代表人民币性能**。换成自采数据后重跑第 2 步即可替换。
+
+### 输出结构
+
+```json
+{
+  "image": "sample.jpg",
+  "banknotes": [{"denomination": 100.0, "label": "100",
+                 "quad": [[0,0],[249,0],[249,124],[0,124]],
+                 "score": 0.611, "area_ratio": 0.845}],
+  "coins": [{"denomination": null, "center": [232.2, 94.2], "radius": 7.7, "score": null}],
+  "total": 100.0,
+  "low_confidence": false,
+  "debug": {"method": "otsu:rect", "coin_count": 0, "elapsed_ms": 217.1, "model": "Pipeline"}
+}
+```
+
+三条约定：
+
+1. **纸币与硬币互斥**：落在纸币四边形内的圆形候选会被剔除，避免把票面花纹当成硬币。
+2. **`denomination` 为 `null` 表示「检测到但未识别」**，不是 0；此时 `total` 也为 `null`，不做部分求和后冒充总额。
+3. **`low_confidence` 为真**表示存在未识别的目标或缺少模型，下游应提示用户而不是静默输出。
 
 ## 7. 数据与合规（重要）
 

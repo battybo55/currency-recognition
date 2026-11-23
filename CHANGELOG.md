@@ -5,6 +5,10 @@
 ## [Unreleased]
 
 ### Added
+- `src/pipeline.py`：端到端分析入口，输出 README 约定的 JSON 结构
+- `scripts/run_demo.py`：单图演示，可另存标注图
+- `scripts/train_banknote.py`：面额分类器训练（当前用外部数据，模型不入库）
+- 纸币—硬币互斥：落在纸币四边形内的圆形候选会被剔除
 - `src/features.py`：Lab/HSV 颜色直方图与矩、LBP、GLCM、Gabor、DFT/DCT、四边形几何特征
 - `src/classify.py`：标准化 + SVM/RF/kNN/LR 的统一构造
 - `scripts/exp_banknote.py`：E0（整图）与 E2（四角校正）对照实验
@@ -17,10 +21,10 @@
 - `find_banknote_quad_v2` 改用矩形度 + 边缘掩膜兜底，定位成功率由 38.5% 提升到 68.5%。
 
 ### Planned
-- 纸币分割与四点透视校正（M3）
-- 硬币霍夫圆 / 分水岭双路线（M3）
-- 特征提取与分类基线 E0–E5（M4）
-- 消融矩阵与鲁棒性切片 E6（M5）
+- 自采人民币数据与标注（M2）
+- E6 完整切片：光照 / 角度 / 重叠率
+- 硬币面额分类（当前只有计数）
+- 端到端金额准确率与混排图评测
 - 课程报告与 v1.0 发布（M6）
 
 ## [0.1.0] - 2026-11-23

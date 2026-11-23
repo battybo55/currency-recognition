@@ -26,7 +26,13 @@ banknote:
 
 coin:
   detector: hough          # hough | watershed | fuse
-  radius_ratio: [0.03, 0.08]   # 相对图像短边
+  radius_ratio: [0.03, 0.08]   # 相对图像短边（v1 单尺度，仅对照用）
+  bands:                   # M3 多尺度：按半径分带，带内 minDist = 2×rmin
+    - [0.02, 0.05]
+    - [0.05, 0.12]
+    - [0.12, 0.30]
+    - [0.30, 0.60]
+  min_support: 0.55        # 圆周边缘支持度阈值（在 dev 上选定）
   hough:
     dp: 1.2
     min_dist_ratio: 0.05
