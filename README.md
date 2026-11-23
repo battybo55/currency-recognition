@@ -58,7 +58,9 @@
 ├─ data/                   # 仅 README；图像不入库
 ├─ docs/
 │  ├─ data_sources.csv     # 素材登记与许可证据
-│  └─ validation_log.md    # V0–V5 验证记录
+│  ├─ validation_log.md    # V0–V5 验证记录
+│  ├─ labeling.md          # 标注工具使用与规范
+│  └─ publish.md           # 推送与首推检查
 └─ results/                # 指标 CSV 与图表（待生成）
 ```
 
@@ -93,6 +95,9 @@ python scripts/exp_features.py --per-class 40                  # E4 / E5
 python scripts/test_scene.py                                   # 背景鲁棒性（4 种背景 × 3 尺度）
 # 5) 同机位多帧背景板（可选，需固定机位；覆盖率 <70% 会警告）
 python scripts/make_background.py --pattern "data/raw/self/s1*.jpg"
+# 6) 标注与像素级分类器（可选，见 docs/labeling.md）
+python scripts/label_tool.py --folder data/raw/self --pattern "s*.jpg"
+python scripts/train_pixelclf.py --masks data/raw/annotations/masks
 ```
 
 模型文件（`models/*.joblib`）不入库：它依赖训练数据，且当前版本是用印度卢比训练的，**不代表人民币性能**。换成自采数据后重跑第 2 步即可替换。

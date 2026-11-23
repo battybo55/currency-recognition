@@ -50,6 +50,8 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="models/pixel_rf.joblib")
     ap.add_argument("--max-each", type=int, default=6000)
+    ap.add_argument("--masks", default="data/raw/annotations/masks",
+                    help="人工标注掩膜目录（由 label_tool.py 生成）；存在则优先使用")
     args = ap.parse_args()
 
     cfg = load_config()
@@ -61,14 +63,21 @@ def main() -> None:
         p = SELF / f"{n}.jpg"
         img = resize_long_side(imread_unicode(p), 1000)
         h, w = img.shape[:2]
-        # 用真实目标掩膜而不是外接框：旋转纸币的框角里大量是木纹，
-        # 拿框当正样本会把背景教成前景（第一版就是这么错的）。
-        objs, _, _ = extract_objects(img, SceneConfig())
-        mask_pos = np.zeros((h, w), np.uint8)
-        for o in objs:
-            if o["kind"] == "note":
-                mask_pos = cv2.bitwise_or(mask_pos, o["mask"])
-        mask_pos = cv2.erode(mask_pos, np.ones((11, 11), np.uint8))
+        # 优先用人工标注掩膜；没有时退回检测掩膜（弱标签，仅供冒烟）
+        manual = ROOT / args.masks / f"{n}.png"
+        if manual.exists():
+            raw = cv2.imdecode(np.fromfile(str(manual), np.uint8), cv2.IMREAD_GRAYSCALE)
+            mask_pos = cv2.resize(raw, (w, h), interpolation=cv2.INTER_NEAREST)
+            mask_pos = cv2.erode(mask_pos, np.ones((5, 5), np.uint8))
+            src = "人工"
+        else:
+            objs, _, _ = extract_objects(img, SceneConfig())
+            mask_pos = np.zeros((h, w), np.uint8)
+            for o in objs:
+                if o["kind"] == "note":
+                    mask_pos = cv2.bitwise_or(mask_pos, o["mask"])
+            mask_pos = cv2.erode(mask_pos, np.ones((11, 11), np.uint8))
+            src = "弱标签"
         far = cv2.dilate(mask_pos, np.ones((31, 31), np.uint8)) == 0
 
         model = detect_background(img)
@@ -78,7 +87,7 @@ def main() -> None:
         X, y = collect_samples(img, mask_pos, neg, model, max_each=args.max_each)
         Xs.append(X)
         ys.append(y)
-        print(f"  {n}: 正样本面积 {mask_pos.mean() / 255:.1%} 负样本面积 {neg.mean() / 255:.1%} 采样 {len(y)}")
+        print(f"  {n}: [{src}] 正样本面积 {mask_pos.mean() / 255:.1%} 负样本面积 {neg.mean() / 255:.1%} 采样 {len(y)}")
 
     X = np.vstack(Xs)
     y = np.concatenate(ys)

@@ -5,6 +5,8 @@
 ## [Unreleased]
 
 ### Added
+- `scripts/label_tool.py`：多边形/矩形标注工具，输出 JSON + 原尺寸掩膜
+- `docs/labeling.md`：标注规范与命令
 - `background.build_plate` 与 `scripts/make_background.py`：同机位多帧背景板（光度归一化 + 覆盖率检查）
 - `src/background.py`：背景色 k-means 检测（边框占比判定）+ 分块噪声归一化剔除，兼容背景不均与光照渐变
 - `src/rmb.py`：人民币面额规则模型（票幅/主色调/暖色比例 + 置信度门限），只对实测原型判别
