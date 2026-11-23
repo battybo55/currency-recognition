@@ -63,6 +63,7 @@ def _analyze_scene(
     denom_cfg,
     plate=None,
     prior=None,
+    reliable=None,
 ):
     """场景自适应路径：前景提取后按形状分纸币/硬币，再逐个判面额。"""
     from .denomination import classify_coin, classify_note
@@ -78,7 +79,7 @@ def _analyze_scene(
     img = resize_long_side(img, cfg["image"]["long_side"])
     overlay = img.copy() if draw else None
 
-    objs, mask, residual = extract_objects(img, SceneConfig(), plate=plate, prior=prior)
+    objs, mask, residual = extract_objects(img, SceneConfig(), plate=plate, prior=prior, reliable=reliable)
     banknotes, coin_items, coins = [], [], []
 
     for o in objs:
@@ -164,6 +165,7 @@ def analyze(
     denom_cfg=None,
     plate=None,
     prior=None,
+    reliable=None,
 ):
     """返回 (result_dict, overlay_or_None)。
 
@@ -172,7 +174,7 @@ def analyze(
     plate 为同机位背景板（见 scripts/make_background.py），传入后改用差分。
     """
     if engine == "scene":
-        return _analyze_scene(image_path, cfg, banknote_model, draw, denom_cfg, plate, prior)
+        return _analyze_scene(image_path, cfg, banknote_model, draw, denom_cfg, plate, prior, reliable)
 
     cfg = cfg or load_config()
     t0 = time.perf_counter()

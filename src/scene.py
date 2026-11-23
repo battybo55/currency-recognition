@@ -284,15 +284,22 @@ def extract_objects(
     split: bool = True,
     plate: np.ndarray | None = None,
     prior: np.ndarray | None = None,
+    reliable: np.ndarray | None = None,
 ) -> tuple[list[dict], np.ndarray, np.ndarray]:
     """检测纸币与硬币候选，返回 (objects, mask, residual)。
 
     objects 每项含 kind / contour / bbox / mask / area_ratio / 几何量。
-    plate 用于像素级差分；prior 只借背景统计（对齐不上时用）。
+    plate 用于像素级差分；prior 只借背景统计；reliable 指定背景板可信的像素，
+    在这些像素上用板差分、其余回退单图颜色模型（覆盖率不足时的折中）。
     """
     cfg = cfg or SceneConfig()
     h, w = bgr.shape[:2]
-    mask, residual = foreground_mask(bgr, cfg, plate=plate, prior=prior)
+    if plate is not None and reliable is not None and reliable.shape[:2] == bgr.shape[:2]:
+        m_plate, residual = foreground_mask(bgr, cfg, plate=plate)
+        m_color, _ = foreground_mask(bgr, cfg)
+        mask = np.where(reliable, m_plate, m_color).astype(np.uint8)
+    else:
+        mask, residual = foreground_mask(bgr, cfg, plate=plate, prior=prior)
 
     n, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
     objects: list[dict] = []
