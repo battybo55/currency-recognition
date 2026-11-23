@@ -1,5 +1,10 @@
 # 发布到 GitHub
 
+> **当前进度（2026-11-23）**：本地已配好 remote `https://github.com/battybo55/currency-recognition.git`，但远端仓库尚未创建。
+> GitHub 连接器没有建仓权限（API 返回 403 `Resource not accessible by integration`），需在网页点一次：
+> <https://github.com/new?name=currency-recognition&visibility=public>
+> 建好后执行 `git push -u origin main` 与 `git push origin v0.1.0` 即可，其余均已就绪。
+
 本地仓库已就绪：`main` 分支、首个提交、标签 `v0.1.0`、工作区干净。
 推送前先跑一次自检：
 

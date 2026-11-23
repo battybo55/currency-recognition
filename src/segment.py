@@ -156,3 +156,161 @@ def detect_coins_watershed(
             continue
         out.append((x, y, r))
     return np.asarray(out, dtype=np.float32) if out else np.empty((0, 3), dtype=np.float32)
+
+
+# ---------------------------------------------------------------------------
+# M3：多尺度霍夫与边缘回退（针对 V3 暴露的四个问题）
+# ---------------------------------------------------------------------------
+
+DEFAULT_BANDS = ((0.02, 0.05), (0.05, 0.12), (0.12, 0.30), (0.30, 0.60))
+
+
+def _dedupe_circles(circles: np.ndarray, overlap: float = 0.7, ratio_tol: float = 0.5) -> np.ndarray:
+    """按半径从大到小贪心去重：同心或高度重叠且半径接近的只保留一个。"""
+    if len(circles) == 0:
+        return circles
+    order = np.argsort(-circles[:, 2])
+    kept: list[tuple[float, float, float]] = []
+    for i in order:
+        x, y, r = (float(v) for v in circles[i])
+        duplicate = False
+        for kx, ky, kr in kept:
+            d = float(np.hypot(x - kx, y - ky))
+            if d < overlap * max(r, kr) and abs(r - kr) / max(r, kr) < ratio_tol:
+                duplicate = True
+                break
+        if not duplicate:
+            kept.append((x, y, r))
+    return np.asarray(kept, dtype=np.float32)
+
+
+def detect_coins_multiscale(
+    image: np.ndarray,
+    bands=DEFAULT_BANDS,
+    dp: float = 1.2,
+    param2: int = 40,
+    min_dist_factor: float = 2.0,
+    min_support: float = 0.0,
+) -> np.ndarray:
+    """按半径分带跑霍夫，跨带去重，并可按圆周边缘支持度过滤。
+
+    分带让每一带内的 `minDist` 与半径同量级（≥2r），避免同一枚硬币产生
+    大量同心候选；`min_support > 0` 时再剔除纹理造成的假圆。
+    """
+    gray = to_gray(image)
+    short = min(gray.shape[:2])
+    blur = cv2.medianBlur(gray, 5)
+    found: list[np.ndarray] = []
+
+    for r0, r1 in bands:
+        rmin = max(2, int(short * r0))
+        rmax = max(rmin + 2, int(short * r1))
+        min_dist = max(3, int(min_dist_factor * rmin))
+        circles = cv2.HoughCircles(
+            blur,
+            cv2.HOUGH_GRADIENT,
+            dp=dp,
+            minDist=min_dist,
+            param1=100,
+            param2=param2,
+            minRadius=rmin,
+            maxRadius=rmax,
+        )
+        if circles is not None:
+            found.append(circles[0].astype(np.float32))
+
+    if not found:
+        return np.empty((0, 3), dtype=np.float32)
+
+    merged = _dedupe_circles(np.vstack(found))
+    if min_support <= 0 or len(merged) == 0:
+        return merged
+
+    scores = circle_edge_support(gray, merged)
+    return merged[scores >= min_support]
+
+
+def circle_edge_support(
+    gray: np.ndarray,
+    circles: np.ndarray,
+    n_samples: int = 48,
+    align_tol: float = 0.7,
+    mag_percentile: float = 70.0,
+) -> np.ndarray:
+    """圆周边缘支持度：边界上有多少比例的点存在「沿半径方向」的强梯度。
+
+    这是对霍夫候选的事后校验——真币的圆形轮廓会在整圈产生径向梯度，
+    而纹理形成的假圆只在局部有响应。梯度阈值取本图分位数，不用绝对阈值。
+    """
+    from scipy.ndimage import map_coordinates
+
+    if len(circles) == 0:
+        return np.zeros((0,), dtype=np.float32)
+
+    gx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
+    gy = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
+    mag = np.hypot(gx, gy)
+    thr = float(np.percentile(mag, mag_percentile))
+
+    angles = np.linspace(0.0, 2.0 * np.pi, n_samples, endpoint=False)
+    cos_a, sin_a = np.cos(angles), np.sin(angles)
+    scores = np.zeros((len(circles),), dtype=np.float32)
+
+    h, w = gray.shape[:2]
+    for i, (x, y, r) in enumerate(circles):
+        xs = np.clip(x + r * cos_a, 0, w - 1)
+        ys = np.clip(y + r * sin_a, 0, h - 1)
+        gxs = map_coordinates(gx, [ys, xs], order=1, mode="nearest")
+        gys = map_coordinates(gy, [ys, xs], order=1, mode="nearest")
+        mags = np.hypot(gxs, gys)
+        align = np.abs(gxs * cos_a + gys * sin_a) / np.maximum(mags, 1e-6)
+        scores[i] = float(np.mean((mags > thr) & (align > align_tol)))
+    return scores
+
+
+def foreground_mask_edge(gray: np.ndarray, close_ratio: float = 0.01) -> np.ndarray:
+    """Canny + 闭运算 + 孔洞填充。
+
+    用于亮面金属币压在浅色背景上的情形：此时 Otsu 会把币面高光与背景
+    归为同一类，得到破碎的掩膜；靠边缘闭合反而能拿到实心目标。
+    """
+    h, w = gray.shape[:2]
+    edges = cv2.Canny(gray, 50, 150)
+    k = max(3, int(min(h, w) * close_ratio))
+    k = k if k % 2 == 1 else k + 1
+    edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, np.ones((k, k), np.uint8))
+
+    flood = edges.copy()
+    mask = np.zeros((h + 2, w + 2), np.uint8)
+    cv2.floodFill(flood, mask, (0, 0), 255)
+    holes = cv2.bitwise_not(flood)
+    return cv2.bitwise_or(edges, holes)
+
+
+def detect_coins_watershed_v2(
+    image: np.ndarray,
+    min_distance_ratio: float = 0.03,
+    threshold_rel: float = 0.10,
+) -> np.ndarray:
+    """边缘回退掩膜 + 相对阈值峰值。
+
+    与 v1 的差别有两处：掩膜改用 Canny 闭合（解决亮面金属），
+    种子阈值改为相对峰值（解决密集场景下小币被 dist.max 压掉）。
+    """
+    from skimage.feature import peak_local_max
+
+    gray = cv2.medianBlur(to_gray(image), 5)
+    h, w = gray.shape[:2]
+    b = foreground_mask_edge(gray)
+    b = cv2.morphologyEx(b, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+
+    dist = cv2.distanceTransform(b, cv2.DIST_L2, 5)
+    if float(dist.max()) <= 0:
+        return np.empty((0, 3), dtype=np.float32)
+
+    md = max(3, int(min(h, w) * min_distance_ratio))
+    coords = peak_local_max(dist, min_distance=md, threshold_rel=threshold_rel, exclude_border=False)
+    if len(coords) == 0:
+        return np.empty((0, 3), dtype=np.float32)
+    out = [(float(c), float(r), float(dist[r, c])) for r, c in coords]
+    return np.asarray(out, dtype=np.float32)
