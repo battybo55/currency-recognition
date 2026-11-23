@@ -6,6 +6,10 @@
 
 ### Added
 - `src/pipeline.py`：端到端分析入口，输出 README 约定的 JSON 结构
+- `src/scene.py`：场景自适应前景提取（边框颜色模型 + 边缘线索融合 + 分水岭拆分），不依赖固定背景模板
+- `src/denomination.py` 与 `scripts/calibrate_denomination.py`：色度原型的面额判别与标定流程
+- `scripts/test_scene.py`：四种背景 × 三种尺度的背景鲁棒性测试
+- `scripts/run_demo.py --engine scene`：木纹等纹理背景下的端到端路径
 - `scripts/run_demo.py`：单图演示，可另存标注图
 - `scripts/train_banknote.py`：面额分类器训练（当前用外部数据，模型不入库）
 - 纸币—硬币互斥：落在纸币四边形内的圆形候选会被剔除

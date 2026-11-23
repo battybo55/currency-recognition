@@ -19,6 +19,7 @@ from .preprocess import resize_long_side
 from .segment import (
     detect_coins_multiscale,
     find_banknote_quads,
+    order_quad,
     warp_quad,
 )
 
@@ -54,13 +55,105 @@ def _note_like(quad: np.ndarray, area_ratio: float) -> bool:
     return 1.5 <= aspect <= 2.8 and 0.01 <= area_ratio <= 0.75
 
 
+def _analyze_scene(
+    image_path: str | Path,
+    cfg: dict | None,
+    banknote_model,
+    draw: bool,
+    denom_cfg,
+):
+    """场景自适应路径：前景提取后按形状分纸币/硬币，再逐个判面额。"""
+    from .denomination import classify_coin, classify_note
+    from .scene import SceneConfig, extract_objects
+
+    cfg = cfg or load_config()
+    t0 = time.perf_counter()
+    img = imread_unicode(image_path)
+    if img is None:
+        raise FileNotFoundError(f"无法读取图像：{image_path}")
+    img = resize_long_side(img, cfg["image"]["long_side"])
+    overlay = img.copy() if draw else None
+
+    objs, mask, residual = extract_objects(img, SceneConfig())
+    banknotes, coins = [], []
+
+    for o in objs:
+        if o["kind"] == "note":
+            rect = cv2.minAreaRect(o["contour"])
+            quad = order_quad(cv2.boxPoints(rect))
+            warped = warp_quad(img, quad, tuple(cfg["banknote"]["output_size"]))
+            label = score = None
+            if banknote_model is not None:
+                proba = banknote_model.predict_proba(_features(warped))[0]
+                idx = int(np.argmax(proba))
+                label, score = str(banknote_model.classes_[idx]), round(float(proba[idx]), 3)
+            elif denom_cfg is not None:
+                r = classify_note(warped, denom_cfg)
+                label, score = r["label"], r["confidence"]
+            banknotes.append({
+                "denomination": label_to_value(label) if label else None,
+                "label": label,
+                "quad": [[round(float(x), 1), round(float(y), 1)] for x, y in quad],
+                "score": score,
+                "area_ratio": round(float(o["area_ratio"]), 3),
+            })
+            if draw:
+                cv2.polylines(overlay, [quad.astype(np.int32)], True, (0, 255, 0), 3)
+        else:
+            x, y, w, h = o["bbox"]
+            roi = img[y:y + h, x:x + w]
+            cmask = o["mask"][y:y + h, x:x + w]
+            r = {"value": None, "label": None, "confidence": 0.0, "candidates": []}
+            if denom_cfg is not None:
+                r = classify_coin(roi, cmask, denom_cfg)
+            cx, cy = x + w / 2, y + h / 2
+            coins.append({
+                "denomination": r["value"],
+                "label": r["label"],
+                "center": [round(cx, 1), round(cy, 1)],
+                "radius": round(max(cv2.minAreaRect(o["contour"])[1]) / 2, 1),
+                "score": r["confidence"],
+                "candidates": r.get("candidates", []),
+            })
+            if draw:
+                cv2.circle(overlay, (int(cx), int(cy)), int(max(cv2.minAreaRect(o["contour"])[1]) / 2),
+                           (0, 200, 255), 2)
+
+    values = [b["denomination"] for b in banknotes] + [c["denomination"] for c in coins]
+    total = float(sum(v for v in values if v is not None)) if all(v is not None for v in values) else None
+    result = {
+        "image": Path(image_path).name,
+        "banknotes": banknotes,
+        "coins": coins,
+        "total": total,
+        "low_confidence": bool(not banknotes or any(v is None for v in values)),
+        "debug": {
+            "engine": "scene",
+            "banknote_count": len(banknotes),
+            "coin_count": len(coins),
+            "elapsed_ms": round((time.perf_counter() - t0) * 1000, 1),
+            "model": "trained" if banknote_model is not None else ("prototype" if denom_cfg else None),
+        },
+    }
+    return result, overlay
+
+
 def analyze(
     image_path: str | Path,
     cfg: dict | None = None,
     banknote_model=None,
     draw: bool = False,
+    engine: str = "legacy",
+    denom_cfg=None,
 ):
-    """返回 (result_dict, overlay_or_None)。"""
+    """返回 (result_dict, overlay_or_None)。
+
+    engine="legacy" 使用 Otsu/边缘掩膜；engine="scene" 使用场景自适应前景提取
+    （边界颜色模型 + 分水岭），对木纹、布纹等纹理背景更稳。
+    """
+    if engine == "scene":
+        return _analyze_scene(image_path, cfg, banknote_model, draw, denom_cfg)
+
     cfg = cfg or load_config()
     t0 = time.perf_counter()
 

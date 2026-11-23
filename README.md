@@ -50,6 +50,8 @@
 ├─ requirements.txt
 ├─ configs/                # 每组实验一个 yaml
 ├─ src/                    # 预处理 / 分割 / 特征 / 分类 / 评测
+│  ├─ scene.py             # 场景自适应前景提取（无模板）
+│  └─ denomination.py      # 色度原型面额判别 + 标定
 ├─ scripts/                # 验证与诊断入口（validate_v3 / diagnose_v3）
 ├─ data/                   # 仅 README；图像不入库
 ├─ docs/
@@ -79,11 +81,14 @@ python scripts/train_banknote.py --per-class 40
 # 3) 单图端到端，输出 JSON 与标注图
 python scripts/run_demo.py --image data/raw/_demo/sample.jpg \
     --model models/demo_indian.joblib --draw
+# 3b) 场景自适应引擎：木纹、布纹等纹理背景用这个
+python scripts/run_demo.py --image data/raw/self/s03.jpg --engine scene --draw
 # 4) 复现实验
 python scripts/validate_v3.py                                  # V3 流程验证
 python scripts/sweep_circle_support.py --n 400                 # 硬币阈值扫描
 python scripts/exp_banknote.py --per-class 20                  # E0 / E2
 python scripts/exp_features.py --per-class 40                  # E4 / E5
+python scripts/test_scene.py                                   # 背景鲁棒性（4 种背景 × 3 尺度）
 ```
 
 模型文件（`models/*.joblib`）不入库：它依赖训练数据，且当前版本是用印度卢比训练的，**不代表人民币性能**。换成自采数据后重跑第 2 步即可替换。

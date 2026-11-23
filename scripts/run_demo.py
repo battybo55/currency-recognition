@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from src.io_utils import imwrite_unicode  # noqa: E402
+from src.denomination import load_config as load_denom  # noqa: E402
 from src.pipeline import analyze, load_config  # noqa: E402
 
 EVID = ROOT / "data/raw/_evidence/demo"
@@ -27,12 +28,18 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--image", required=True)
     ap.add_argument("--model", default="")
+    ap.add_argument("--denom", default="", help="面额原型配置，如 configs/denomination_indian.yaml")
+    ap.add_argument("--engine", default="legacy", choices=["legacy", "scene"])
     ap.add_argument("--draw", action="store_true", help="在 data/raw/_evidence/demo 下保存标注图")
     args = ap.parse_args()
 
     model = joblib.load(ROOT / args.model) if args.model else None
+    dcfg = load_denom(ROOT / args.denom) if args.denom else None
     cfg = load_config()
-    result, overlay = analyze(args.image, cfg, banknote_model=model, draw=args.draw)
+    result, overlay = analyze(
+        args.image, cfg, banknote_model=model, draw=args.draw,
+        engine=args.engine, denom_cfg=dcfg,
+    )
 
     print(json.dumps(result, ensure_ascii=False, indent=2))
     if args.draw and overlay is not None:
