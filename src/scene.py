@@ -110,12 +110,14 @@ def foreground_mask(
     bgr: np.ndarray,
     cfg: SceneConfig | None = None,
     plate: np.ndarray | None = None,
+    prior: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """返回 (掩膜, 响应图)。掩膜 0/255。
 
-    两种模式：
-      - 无背景板：从单张图自身估计背景色，阈值单位是「背景噪声的倍数」；
-      - 有背景板（plate）：直接与背景板做 Lab 差分，先做光度对齐抵消曝光差异。
+    三种模式：
+      - plate：与同机位背景板做 Lab 差分（需像素级对齐）；
+      - prior：只借背景板的**颜色与噪声统计**，不做像素差分（对齐不上时的退路）；
+      - 都没有：从单张图边框估计背景色，阈值单位是「背景噪声的倍数」。
     """
     cfg = cfg or SceneConfig()
 
@@ -129,8 +131,13 @@ def foreground_mask(
         h, w = mask.shape[:2]
         short = min(h, w)
     else:
-        model = detect_background(bgr, grid=cfg.grid, border_ratio=cfg.border_ratio)
-        model.tile_sigma = tile_sigma(bgr, model, cfg.grid)
+        if prior is not None:
+            model = detect_background(prior, grid=cfg.grid, border_ratio=cfg.border_ratio)
+            sigma_src = prior
+        else:
+            model = detect_background(bgr, grid=cfg.grid, border_ratio=cfg.border_ratio)
+            sigma_src = bgr
+        model.tile_sigma = tile_sigma(sigma_src, model, cfg.grid)
         z = normalized_residual(bgr, model)
         h, w = z.shape[:2]
         short = min(h, w)
@@ -276,15 +283,16 @@ def extract_objects(
     cfg: SceneConfig | None = None,
     split: bool = True,
     plate: np.ndarray | None = None,
+    prior: np.ndarray | None = None,
 ) -> tuple[list[dict], np.ndarray, np.ndarray]:
     """检测纸币与硬币候选，返回 (objects, mask, residual)。
 
     objects 每项含 kind / contour / bbox / mask / area_ratio / 几何量。
-    传入 plate 时改用背景板差分。
+    plate 用于像素级差分；prior 只借背景统计（对齐不上时用）。
     """
     cfg = cfg or SceneConfig()
     h, w = bgr.shape[:2]
-    mask, residual = foreground_mask(bgr, cfg, plate=plate)
+    mask, residual = foreground_mask(bgr, cfg, plate=plate, prior=prior)
 
     n, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
     objects: list[dict] = []
