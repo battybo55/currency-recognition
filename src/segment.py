@@ -30,6 +30,66 @@ def order_quad(points: np.ndarray) -> np.ndarray:
     )
 
 
+def find_banknote_quad_v2(
+    image: np.ndarray,
+    min_area_ratio: float = 0.02,
+    aspect_range=(1.15, 3.2),
+    min_rectangularity: float = 0.80,
+    max_candidates: int = 8,
+):
+    """带几何约束的纸币定位。
+
+    在最大连通域之外增加三条物理先验，避免在多张叠放或桌面场景中框错：
+      - 面积占比下限；
+      - 最小外接矩形的长宽比落在纸币合理区间（透视会压低长宽比，故下限取 1.15）；
+      - 矩形度（轮廓面积 / 最小外接矩形面积）足够高；用矩形度而非凸包实心度，
+        是因为带阴影或圆角的钞票轮廓常呈非凸，实心度会误杀。
+    返回 (quad, method, area_ratio, found)。
+    """
+    h, w = image.shape[:2]
+    gray = cv2.GaussianBlur(to_gray(image), (5, 5), 0)
+    k = max(3, int(min(h, w) * 0.01))
+    kernel = np.ones((k, k), np.uint8)
+
+    # 两套掩膜：阈值法优先（票面与背景亮度差大时最稳），
+    # 边缘法兜底（浅色票面压在白纸上时 Otsu 会把两者归为一类）。
+    masks = [("otsu", binary_foreground(gray)), ("edge", foreground_mask_edge(gray))]
+
+    for mask_name, mask in masks:
+        m = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+        contours, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            continue
+        contours = sorted(contours, key=cv2.contourArea, reverse=True)[:max_candidates]
+
+        for c in contours:
+            area = float(cv2.contourArea(c))
+            ratio = area / (h * w)
+            if ratio < min_area_ratio:
+                continue
+
+            rect = cv2.minAreaRect(c)
+            rw, rh = rect[1]
+            if min(rw, rh) <= 2:
+                continue
+            aspect = max(rw, rh) / max(min(rw, rh), 1e-6)
+            if not (aspect_range[0] <= aspect <= aspect_range[1]):
+                continue
+
+            rect_area = max(rw * rh, 1e-6)
+            rectangularity = area / rect_area
+            if rectangularity < min_rectangularity:
+                continue
+
+            peri = cv2.arcLength(c, True)
+            approx = cv2.approxPolyDP(c, 0.02 * peri, True)
+            if len(approx) == 4:
+                return order_quad(approx.reshape(4, 2)), f"{mask_name}:approx", ratio, True
+            return order_quad(cv2.boxPoints(rect)), f"{mask_name}:rect", ratio, True
+
+    return None, "no_valid_candidate", 0.0, False
+
+
 def warp_quad(image: np.ndarray, quad: np.ndarray, out_size=(512, 256)) -> np.ndarray:
     """按四点做透视变换，输出宽×高 = out_size。"""
     ow, oh = out_size
