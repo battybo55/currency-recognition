@@ -1,0 +1,64 @@
+# 硬币分割计数参考：OpenCV 三例中的分水岭方案
+
+- **来源**：《三个 OpenCV 目标分割计数实例（附源码）》
+- **公众号**：OpenCV与AI深度学习（Color Space）
+- **发布日期**：2023-10-12
+- **链接**：https://mp.weixin.qq.com/s/BuenAuw4ES5ESw5bjPt__g
+- **性质**：方法参考（教程类），非数据集、非论文
+
+## 原文方法（硬币例）
+
+```
+pyrMeanShiftFiltering(image, 21, 51)   # 边缘保持平滑，压掉纹理
+→ cvtColor(gray) → threshold(OTSU)
+→ distance_transform_edt
+→ peak_local_max(min_distance=10)
+→ ndimage.label(markers)
+→ watershed(-D, markers, mask=thresh)
+→ 每个区域 minEnclosingCircle 计数
+```
+
+三例（硬币、药片、玉米粒）共用同一骨架，只调整参数。作者在结尾的总结值得注意：
+
+1. 预处理就是二值化 + 形态学；
+2. **粘连分割离不开距离变换**；
+3. **分水岭"根据实际情况使用，有时分割不太可控，慎用"**。
+
+## 与本项目实现的对应关系
+
+| 原文步骤 | 本项目对应 | 差异 |
+|---|---|---|
+| `pyrMeanShiftFiltering` | `cv2.bilateralFilter`（`scene.edge_mask`） | 我们只用于边缘线索；**未用于颜色通道的前处理** |
+| Otsu 二值化 | `background.foreground_mask` 的 Otsu | 我们在色差响应图上做 Otsu，而非灰度图 |
+| 距离变换 + 峰值 | `scene._split_component` | 一致（`peak_local_max` + `watershed`） |
+| `min_distance=10` 固定像素 | `split_min_distance=0.08 × 短边` | 我们改为相对量，换分辨率不用改 |
+| `minEnclosingCircle` 计数 | `detect_coins_multiscale` 的霍夫圆 | 两条不同路线：原文明水岭，我们走霍夫 |
+
+## 可借鉴的两点
+
+1. **均值漂移前处理**：`pyrMeanShiftFiltering` 能在保边的前提下去掉木纹这类高频纹理，比双边滤波更彻底。我们目前没有把它用在颜色判定之前，值得一试。
+2. **"分水岭慎用"的判断与我们的实验一致**：本项目实例拆分试验中，分水岭把 IoU 抬到 0.437，但实例数误差从 2.33 升到 3.40（见 `docs/validation_log.md`），根因是峰值数对尺度与遮挡极其敏感，`min_distance` 一旦不能同时适配硬币与纸币，就会一边过分割一边欠分割。
+
+## 本项目的验证结果（2026-11-23）
+
+对"均值漂移前处理"做了对照实验（同一引擎，只改是否前置 `pyrMeanShiftFiltering(21, 51)`）：
+
+| 图 | 原始 | 均值漂移后 | 真值 | 耗时（原始 / 漂移） |
+|---|---|---|---|---|
+| s02 | 4 | 5 | 4 | 0.35s / 1.92s |
+| s03 | 4 | 4 | 4 | 0.28s / 1.73s |
+| s04 | 2 | 1 | 4 | 0.32s / 1.48s |
+| s05 | 3 | 2 | 4 | 0.35s / 1.46s |
+
+**结论：不采用。** 耗时增加约 5 倍，硬币召回反而下降（s04 2→1、s05 3→2）。原因是本场景中硬币与木纹的对比本就很弱，均值漂移在压掉木纹纹理的同时，也削平了币缘的弱梯度；原文的硬币平铺在浅色桌面上、对比强，前提不同。
+
+这条负结果与原文作者自己的提醒一致——**这类方法对场景假设很敏感，换场景需重新验证**。
+
+## 局限（针对本项目场景）
+
+- 原文假设**单一尺度目标 + 干净背景**（硬币平铺在浅色桌面）；我们的场景是木纹桌面、纸币与硬币混排、目标尺度跨 5 倍，直接套用会失效。
+- 原文没有处理**纸币与硬币共存**时的优先级问题；我们通过"票面内圆剔除"解决。
+
+## 引用格式
+
+> Color Space. 三个 OpenCV 目标分割计数实例（附源码）[EB/OL]. 微信公众号「OpenCV与AI深度学习」, 2023-10-12. https://mp.weixin.qq.com/s/BuenAuw4ES5ESw5bjPt__g
