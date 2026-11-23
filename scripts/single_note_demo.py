@@ -55,8 +55,22 @@ def main() -> None:
     result = {"image": Path(args.image).name, "located": q is not None}
 
     if q is None:
-        print("未定位到纸币")
-        stage["定位失败"] = img
+        # 兜底：定位失败时按整图判定。面额判据用的是颜色，与方向/位置无关，
+        # 所以只要票面占画面主体，仍能给出面额（附低置信提示）。
+        warped = cv2.resize(img, (900, 439), interpolation=cv2.INTER_AREA)
+        r = classify_rmb(warped, RMBConfig())
+        result.update({
+            "located": False,
+            "denomination": r["value"],
+            "label": r["label"],
+            "confidence": round(r["confidence"] * 0.8, 3),   # 定位失败，置信打八折
+            "candidates": r["candidates"],
+            "fallback": True,
+        })
+        label_img = warped.copy()
+        cv2.putText(label_img, f"{r['label'] or '未识别'}（定位失败，按整图判定）",
+                    (16, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 200), 2, cv2.LINE_AA)
+        stage["定位失败（按整图判定）"] = label_img
     else:
         warped = warp_note(img, q)
         gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
