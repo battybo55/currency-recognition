@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### Added
+- `scripts/eval_pixelclf.py`：用人工标注做 5 折、按图分组的像素级评测（IoU + 实例数）
 - `scripts/label_tool.py`：多边形/矩形标注工具，输出 JSON + 原尺寸掩膜
 - `docs/labeling.md`：标注规范与命令
 - `background.build_plate` 与 `scripts/make_background.py`：同机位多帧背景板（光度归一化 + 覆盖率检查）
