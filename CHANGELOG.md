@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+### Changed
+- `LICENSE` 改为纯 MIT 文本。原先附在末尾的范围声明会让 GitHub 识别为 `NOASSERTION`；该声明已并入 README 第 11 节。
+
 ### Planned
 - 纸币分割与四点透视校正（M3）
 - 硬币霍夫圆 / 分水岭双路线（M3）

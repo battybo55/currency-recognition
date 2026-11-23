@@ -129,7 +129,7 @@ python scripts/run_all.py --config configs/baseline.yaml
 
 ## 11. 许可与引用
 
-代码与文档采用 [MIT License](LICENSE)。该许可**不覆盖**任何第三方数据集、票币图像或人民币图样。引用信息见 [`CITATION.cff`](CITATION.cff)。
+代码与文档采用 [MIT License](LICENSE)。该许可**不覆盖**任何第三方数据集、票币图像或人民币图样；本仓库不分发任何图像数据，获取方式见 [`data/README.md`](data/README.md)。引用信息见 [`CITATION.cff`](CITATION.cff)。
 
 ## 12. 发布
 
