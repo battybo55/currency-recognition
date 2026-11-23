@@ -45,12 +45,12 @@ class RMBProto:
 class RMBConfig:
     kind: str = "rmb"
     prototypes: list[RMBProto] = field(default_factory=lambda: [
-        RMBProto(1, (130, 63), "橄榄绿", -6, 12, 0.30),
+        RMBProto(1, (130, 63), "橄榄绿", -10.9, 8.2, 0.02, measured=True),
         RMBProto(5, (135, 63), "紫", 8, -2, 0.45),
-        RMBProto(10, (140, 70), "蓝黑", -0.5, 4.0, 0.28, measured=True),
-        RMBProto(20, (145, 70), "棕", 12, 22, 0.65),
-        RMBProto(50, (150, 70), "绿", -18, 10, 0.15),
-        RMBProto(100, (155, 77), "红", 14, 18, 0.78, measured=True),
+        RMBProto(10, (140, 70), "蓝黑", -4.4, -16.3, 0.06, measured=True),
+        RMBProto(20, (145, 70), "棕", 4.6, 11.5, 0.28, measured=True),
+        RMBProto(50, (150, 70), "绿", -17.7, -5.3, 0.02, measured=True),
+        RMBProto(100, (155, 77), "红", 14, 20, 0.70, measured=True),
     ])
     aspect_range: tuple = (1.85, 2.35)   # 允许透视压缩
     color_tol: float = 16.0
