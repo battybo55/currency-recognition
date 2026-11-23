@@ -44,3 +44,8 @@ Thumbs.db
 # 含真实纸币图像的演示拼图（违反零人民币原图策略，不入库）
 results/figures/demo_six_denominations.png
 results/figures/demo_coins.png
+
+# PyInstaller 打包产物（体积大、含绝对路径，不入库）
+build/
+dist/
+*.spec

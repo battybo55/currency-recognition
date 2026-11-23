@@ -376,8 +376,6 @@ def circle_edge_support(
     这是对霍夫候选的事后校验——真币的圆形轮廓会在整圈产生径向梯度，
     而纹理形成的假圆只在局部有响应。梯度阈值取本图分位数，不用绝对阈值。
     """
-    from scipy.ndimage import map_coordinates
-
     if len(circles) == 0:
         return np.zeros((0,), dtype=np.float32)
 
@@ -394,8 +392,13 @@ def circle_edge_support(
     for i, (x, y, r) in enumerate(circles):
         xs = np.clip(x + r * cos_a, 0, w - 1)
         ys = np.clip(y + r * sin_a, 0, h - 1)
-        gxs = map_coordinates(gx, [ys, xs], order=1, mode="nearest")
-        gys = map_coordinates(gy, [ys, xs], order=1, mode="nearest")
+        # 用 cv2.remap 做双线性采样，替代 scipy.ndimage.map_coordinates（去掉 scipy 依赖）
+        mx = xs.reshape(1, -1).astype(np.float32)
+        my = ys.reshape(1, -1).astype(np.float32)
+        gxs = cv2.remap(gx, mx, my, cv2.INTER_LINEAR,
+                        borderMode=cv2.BORDER_REPLICATE).reshape(-1)
+        gys = cv2.remap(gy, mx, my, cv2.INTER_LINEAR,
+                        borderMode=cv2.BORDER_REPLICATE).reshape(-1)
         mags = np.hypot(gxs, gys)
         align = np.abs(gxs * cos_a + gys * sin_a) / np.maximum(mags, 1e-6)
         scores[i] = float(np.mean((mags > thr) & (align > align_tol)))

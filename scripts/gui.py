@@ -1,86 +1,77 @@
-"""纸币面值识别 GUI。
+"""纸币面值识别 + 硬币计数 GUI（单进程，无外部依赖）。
 
-运行环境：系统 Python 3.14（有 tkinter + Pillow）。
-图像处理由项目 venv 的 opencv 完成，通过子进程调用 `single_note_demo.py`，
-避免在两个解释器之间搬运 opencv。
+运行环境：系统 Python 3.14（tkinter + cv2 + numpy + Pillow 齐全）。
+打包成 exe 后解压即用，不再依赖项目 venv。
 
-用法（由 纸币识别.bat 启动）：
-    python scripts/gui.py
+按钮：
+    打开图片 —— 选择一张纸币或硬币照片
+    识别纸币 —— 定位 → 校正 → 灰度 → 二值 → 面额识别
+    识别硬币 —— 霍夫圆计数
 """
 
 from __future__ import annotations
 
-import os
-import subprocess
 import sys
+import tkinter as tk
 from pathlib import Path
+from tkinter import filedialog
 
-# 本机项目 venv 没有 tkinter；若当前解释器缺 tkinter，则自重启到系统 Python 3.14。
-# 系统解释器路径由 LOCALAPPDATA 动态求出，不写死用户名。
+import cv2
+import numpy as np
+from PIL import Image, ImageTk
 
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 
-def _has_tk() -> bool:
-    try:
-        import tkinter  # noqa: F401
-        return True
-    except ImportError:
-        return False
-
-
-if not _has_tk():
-    cands = []
-    local = os.environ.get("LOCALAPPDATA")
-    if local:
-        cands.append(Path(local) / "Python" / "bin" / "python.exe")
-    for c in cands:
-        if c.exists():
-            print(f"[gui] 当前解释器无 tkinter，改用 {c}")
-            subprocess.run([str(c), __file__, *sys.argv[1:]])
-            sys.exit(0)
-    print("未找到带 tkinter 的 Python 解释器，无法启动 GUI")
-    sys.exit(1)
-
-import json  # noqa: E402
-import tempfile  # noqa: E402
-import tkinter as tk  # noqa: E402
-from tkinter import filedialog  # noqa: E402
-
-from PIL import Image, ImageTk  # noqa: E402
-
-ROOT = Path(__file__).resolve().parents[1]
-VENV_PY = ROOT.parent / ".venv" / "Scripts" / "python.exe"
-DEMO = ROOT / "scripts" / "single_note_demo.py"
+from src.io_utils import imread_unicode  # noqa: E402
+from src.preprocess import resize_long_side  # noqa: E402
+from src.rmb import RMBConfig, classify_rmb  # noqa: E402
+from src.segment import detect_coins_multiscale  # noqa: E402
+from src.single_note import binarize, locate_note, numeral_region, warp_note  # noqa: E402
 
 BG = "#f4f4f5"
+PANEL_W, PANEL_H = 260, 150
+
+
+def to_photo(img: np.ndarray, w: int, h: int) -> ImageTk.PhotoImage:
+    if img.ndim == 2:
+        img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    pil = Image.fromarray(rgb)
+    pil.thumbnail((w, h), Image.LANCZOS)
+    return ImageTk.PhotoImage(pil)
 
 
 class App:
     def __init__(self, root: tk.Tk):
         self.root = root
-        root.title("纸币面值识别")
+        root.title("纸币面值识别与硬币计数")
         root.configure(bg=BG)
         self.path: Path | None = None
-        self.photo: ImageTk.PhotoImage | None = None
-        self.tmp = Path(tempfile.gettempdir()) / "note_gui_montage.png"
-        self.json_tmp = Path(tempfile.gettempdir()) / "note_gui_result.json"
+        self.img: np.ndarray | None = None
+        self.photos: list = []
 
         bar = tk.Frame(root, bg=BG)
         bar.pack(fill="x", padx=12, pady=10)
         tk.Button(bar, text="打开图片", width=12, command=self.open).pack(side="left")
-        tk.Button(bar, text="识别", width=12, command=self.recognize).pack(side="left", padx=8)
-        self.status = tk.Label(bar, text="请先打开一张纸币图片", bg=BG, fg="#666", anchor="w")
+        tk.Button(bar, text="识别纸币", width=12, command=self.recognize_note).pack(side="left", padx=6)
+        tk.Button(bar, text="识别硬币", width=12, command=self.recognize_coin).pack(side="left", padx=6)
+        self.status = tk.Label(bar, text="请打开一张图片", bg=BG, fg="#666", anchor="w")
         self.status.pack(side="left", fill="x", expand=True, padx=8)
 
-        # 中间结果面板（六幅拼接图）
-        frame = tk.Frame(root, bg="white", highlightthickness=1, highlightbackground="#ddd")
-        frame.pack(padx=12, pady=6)
-        self.panel = tk.Label(frame, bg="white", text="此处显示中间结果\n（原图 → 定位 → 校正 → 灰度 → 二值 → 数字区域）",
-                              font=("Microsoft YaHei", 12), fg="#999")
-        self.panel.pack(padx=8, pady=8)
+        grid = tk.Frame(root, bg=BG)
+        grid.pack(padx=12, pady=4)
+        self.panels: dict[str, tk.Label] = {}
+        for i, name in enumerate(["原图", "定位", "透视校正", "灰度", "二值", "结果"]):
+            cell = tk.Frame(grid, bg="white", highlightthickness=1, highlightbackground="#ddd")
+            cell.grid(row=i // 3, column=i % 3, padx=4, pady=4)
+            tk.Label(cell, text=name, bg="white", font=("Microsoft YaHei", 10)).pack(anchor="w", padx=4, pady=2)
+            lab = tk.Label(cell, bg="white")
+            lab.pack(padx=4, pady=2)
+            self.panels[name] = lab
 
-        # 识别结果
         res = tk.Frame(root, bg="white", highlightthickness=1, highlightbackground="#ddd")
-        res.pack(fill="x", padx=12, pady=6)
+        res.pack(fill="x", padx=12, pady=8)
         tk.Label(res, text="识别结果", bg="white", font=("Microsoft YaHei", 10)).pack(anchor="w", padx=10, pady=4)
         self.result = tk.Label(res, text="—", bg="white", fg="#c00000", font=("Microsoft YaHei", 42, "bold"))
         self.result.pack(pady=4)
@@ -88,78 +79,79 @@ class App:
         self.result_sub.pack(pady=4)
 
     def open(self) -> None:
-        p = filedialog.askopenfilename(title="选择纸币图片",
+        p = filedialog.askopenfilename(title="选择图片",
                                        filetypes=[("图片", "*.jpg *.jpeg *.png *.bmp"), ("所有文件", "*.*")])
         if not p:
             return
+        img = imread_unicode(p)
+        if img is None:
+            self.status.config(text="无法读取该图片")
+            return
         self.path = Path(p)
-        img = Image.open(p)
-        img.thumbnail((760, 480))
-        self.photo = ImageTk.PhotoImage(img)
-        self.panel.config(image=self.photo, text="")
+        self.img = resize_long_side(img, 1000)
+        self._set("原图", self.img)
+        for k in ["定位", "透视校正", "灰度", "二值", "结果"]:
+            self._blank(k)
         self.result.config(text="—")
         self.result_sub.config(text="")
-        self.status.config(text=f"已载入 {self.path.name}，点「识别」")
+        self.status.config(text=f"已载入 {self.path.name}")
 
-    def recognize(self) -> None:
-        if self.path is None:
+    def recognize_note(self) -> None:
+        if self.img is None:
             self.status.config(text="请先打开图片")
             return
-        if not VENV_PY.exists():
-            self.status.config(text="未找到项目虚拟环境，无法识别")
-            return
-        self.status.config(text="识别中…")
-        self.root.update_idletasks()
-
-        try:
-            env = os.environ.copy()
-            env["PYTHONUTF8"] = "1"
-            env["PYTHONIOENCODING"] = "utf-8"
-            proc = subprocess.run(
-                [str(VENV_PY), str(DEMO), "--image", str(self.path),
-                 "--save", str(self.tmp), "--json-out", str(self.json_tmp)],
-                capture_output=True, text=True, encoding="utf-8", errors="replace",
-                env=env, timeout=180)
-        except subprocess.TimeoutExpired:
-            self.status.config(text="识别超时")
-            return
-        except Exception as e:
-            self.status.config(text=f"识别失败：{type(e).__name__}")
-            return
-
-        try:
-            if self.json_tmp.exists():
-                result = json.loads(self.json_tmp.read_text(encoding="utf-8"))
-            else:
-                result = None
-                for line in proc.stdout.splitlines():
-                    line = line.strip()
-                    if line.startswith("{"):
-                        result = json.loads(line)
-                        break
-            if result is None:
-                raise ValueError("no result")
-        except Exception as e:
-            self.status.config(text=f"识别失败：{type(e).__name__} {proc.stderr.strip()[-120:]}")
-            return
-
-        if self.tmp.exists():
-            img = Image.open(self.tmp)
-            img.thumbnail((860, 560))
-            self.photo = ImageTk.PhotoImage(img)
-            self.panel.config(image=self.photo, text="")
-
-        if result.get("label"):
-            self.result.config(text=result["label"])
-            sub = f"置信度 {result.get('confidence', 0):.2f}"
-            cands = [c["label"] for c in result.get("candidates", [])[:3] if c.get("label")]
+        q = locate_note(self.img)
+        if q is not None:
+            marked = self.img.copy()
+            cv2.polylines(marked, [q.quad.astype(np.int32)], True, (0, 200, 0), 3)
+            warped = warp_note(self.img, q)
+            self._set("定位", marked)
+            self._set("透视校正", warped)
+            self._set("灰度", cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY))
+            self._set("二值", binarize(warped))
+            r = classify_rmb(warped, RMBConfig())
+            conf = r["confidence"]
+        else:
+            warped = cv2.resize(self.img, (900, 439), interpolation=cv2.INTER_AREA)
+            self._blank("定位")
+            self._set("透视校正", warped)
+            r = classify_rmb(warped, RMBConfig())
+            conf = round(r["confidence"] * 0.8, 3)
+            self.status.config(text="未定位到纸币，按整图判定")
+        nr = numeral_region(warped)
+        self._set("结果", nr[0] if nr is not None else warped)
+        if r["label"]:
+            self.result.config(text=r["label"])
+            sub = f"置信度 {conf:.2f}"
+            cands = [c["label"] for c in r["candidates"][:3] if c["label"]]
             if cands:
                 sub += f"　候选：{' / '.join(cands)}"
         else:
             self.result.config(text="未识别")
             sub = "可能是其他面额，或图片背景/角度不合适"
         self.result_sub.config(text=sub)
-        self.status.config(text=f"定位面积 {result.get('quad_area', 0):.2f}")
+        self.status.config(text=f"面额识别完成")
+
+    def recognize_coin(self) -> None:
+        if self.img is None:
+            self.status.config(text="请先打开图片")
+            return
+        circles = detect_coins_multiscale(self.img, param2=45, min_support=0.45)
+        vis = self.img.copy()
+        for (x, y, r) in circles:
+            cv2.circle(vis, (int(x), int(y)), int(r), (0, 200, 0), 3)
+        self._set("结果", vis)
+        self.result.config(text=f"{len(circles)} 枚")
+        self.result_sub.config(text="霍夫圆计数（纯色/浅色背景更稳）")
+        self.status.config(text=f"检测到 {len(circles)} 枚硬币")
+
+    def _set(self, name: str, img: np.ndarray) -> None:
+        photo = to_photo(img, PANEL_W, PANEL_H)
+        self.photos.append(photo)
+        self.panels[name].config(image=photo)
+
+    def _blank(self, name: str) -> None:
+        self.panels[name].config(image="")
 
 
 def main() -> None:
@@ -169,4 +161,14 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:  # noqa: BLE001
+        import traceback
+        try:
+            from tkinter import messagebox
+            messagebox.showerror("错误", f"{type(e).__name__}: {e}")
+        except Exception:
+            pass
+        traceback.print_exc()
+        sys.exit(1)
