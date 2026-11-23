@@ -43,7 +43,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--image", required=True)
     ap.add_argument("--save", default="")
-    ap.add_argument("--json", action="store_true")
+    ap.add_argument("--json-out", default="", help="把结果 JSON 写到该文件（供 GUI 读取）")
     args = ap.parse_args()
 
     img = resize_long_side(imread_unicode(args.image), 1000)
@@ -118,6 +118,9 @@ def main() -> None:
     out = Path(args.save) if args.save else ROOT / "data/raw/_evidence/single_demo.png"
     imwrite_unicode(out if out.is_absolute() else ROOT / out, montage)
     print(json.dumps(result, ensure_ascii=False, indent=2))
+    if args.json_out:
+        with open(args.json_out, "w", encoding="utf-8") as f:
+            json.dump(result, f, ensure_ascii=False, indent=2)
     print(f"已写出 {out}")
 
 

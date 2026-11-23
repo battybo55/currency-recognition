@@ -62,6 +62,7 @@ class App:
         self.path: Path | None = None
         self.photo: ImageTk.PhotoImage | None = None
         self.tmp = Path(tempfile.gettempdir()) / "note_gui_montage.png"
+        self.json_tmp = Path(tempfile.gettempdir()) / "note_gui_result.json"
 
         bar = tk.Frame(root, bg=BG)
         bar.pack(fill="x", padx=12, pady=10)
@@ -115,24 +116,31 @@ class App:
             env["PYTHONUTF8"] = "1"
             env["PYTHONIOENCODING"] = "utf-8"
             proc = subprocess.run(
-                [str(VENV_PY), str(DEMO), "--image", str(self.path), "--save", str(self.tmp)],
+                [str(VENV_PY), str(DEMO), "--image", str(self.path),
+                 "--save", str(self.tmp), "--json-out", str(self.json_tmp)],
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
                 env=env, timeout=180)
         except subprocess.TimeoutExpired:
             self.status.config(text="识别超时")
             return
+        except Exception as e:
+            self.status.config(text=f"识别失败：{type(e).__name__}")
+            return
 
         try:
-            result = None
-            for line in proc.stdout.splitlines():
-                line = line.strip()
-                if line.startswith("{"):
-                    result = json.loads(line)
-                    break
+            if self.json_tmp.exists():
+                result = json.loads(self.json_tmp.read_text(encoding="utf-8"))
+            else:
+                result = None
+                for line in proc.stdout.splitlines():
+                    line = line.strip()
+                    if line.startswith("{"):
+                        result = json.loads(line)
+                        break
             if result is None:
-                raise ValueError("no json")
-        except Exception:
-            self.status.config(text=f"识别失败：{proc.stderr.strip()[-200:]}")
+                raise ValueError("no result")
+        except Exception as e:
+            self.status.config(text=f"识别失败：{type(e).__name__} {proc.stderr.strip()[-120:]}")
             return
 
         if self.tmp.exists():
