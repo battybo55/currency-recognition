@@ -91,6 +91,8 @@ python scripts/sweep_circle_support.py --n 400                 # 硬币阈值扫
 python scripts/exp_banknote.py --per-class 20                  # E0 / E2
 python scripts/exp_features.py --per-class 40                  # E4 / E5
 python scripts/test_scene.py                                   # 背景鲁棒性（4 种背景 × 3 尺度）
+# 5) 同机位多帧背景板（可选，需固定机位；覆盖率 <70% 会警告）
+python scripts/make_background.py --pattern "data/raw/self/s1*.jpg"
 ```
 
 模型文件（`models/*.joblib`）不入库：它依赖训练数据，且当前版本是用印度卢比训练的，**不代表人民币性能**。换成自采数据后重跑第 2 步即可替换。

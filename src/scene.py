@@ -23,6 +23,7 @@ from .background import (
     BackgroundModel,
     detect_background,
     normalized_residual,
+    residual_against_plate,
     tile_sigma,
 )
 
@@ -35,6 +36,7 @@ class SceneConfig:
     use_edge_cue: bool = True       # 是否融合边缘线索
     grid: tuple = (4, 3)            # 分块噪声网格（背景不均时按块归一化）
     sigma_k: float = 4.0            # 前景阈值：背景噪声的倍数
+    plate_threshold: float = 10.0   # 有背景板时，Lab 距离阈值
     residual_gain: float = 1.6      # 色差对比度拉伸
     min_area_ratio: float = 0.0015  # 目标最小面积占比
     max_area_ratio: float = 0.85    # 超过视为整幅
@@ -104,28 +106,41 @@ def edge_mask(bgr: np.ndarray, cfg: SceneConfig | None = None) -> np.ndarray:
     return filled
 
 
-def foreground_mask(bgr: np.ndarray, cfg: SceneConfig | None = None) -> tuple[np.ndarray, np.ndarray]:
+def foreground_mask(
+    bgr: np.ndarray,
+    cfg: SceneConfig | None = None,
+    plate: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
     """返回 (掩膜, 响应图)。掩膜 0/255。
 
-    阈值单位是「背景噪声的倍数」（sigma），不是绝对灰度差——
-    所以光照变化、背景不均时不需要改参数。
+    两种模式：
+      - 无背景板：从单张图自身估计背景色，阈值单位是「背景噪声的倍数」；
+      - 有背景板（plate）：直接与背景板做 Lab 差分，先做光度对齐抵消曝光差异。
     """
     cfg = cfg or SceneConfig()
-    model = detect_background(bgr, grid=cfg.grid, border_ratio=cfg.border_ratio)
-    model.tile_sigma = tile_sigma(bgr, model, cfg.grid)
-    z = normalized_residual(bgr, model)
-    h, w = z.shape[:2]
-    short = min(h, w)
 
-    residual = np.clip(z * 32, 0, 255).astype(np.uint8)
-    if float(z.max()) < cfg.sigma_k:
-        return np.zeros((h, w), np.uint8), residual
-
-    zu = np.clip(z * 16, 0, 255).astype(np.uint8)
-    thr_otsu, _ = cv2.threshold(zu, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    # 取「噪声倍数下限」与 Otsu 的较大者：纹理背景上 Otsu 会压得很低，导致满屏前景
-    thr = max(cfg.sigma_k * 16, float(thr_otsu))
-    mask = np.where(zu >= thr, 255, 0).astype(np.uint8)
+    if plate is not None and plate.shape[:2] == bgr.shape[:2]:
+        res = residual_against_plate(bgr, plate)
+        thr_o, _ = cv2.threshold(np.clip(res * 4, 0, 255).astype(np.uint8), 0, 255,
+                                 cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        thr = max(cfg.plate_threshold, thr_o / 4.0)
+        mask = np.where(res >= thr, 255, 0).astype(np.uint8)
+        residual = np.clip(res * 4, 0, 255).astype(np.uint8)
+        h, w = mask.shape[:2]
+        short = min(h, w)
+    else:
+        model = detect_background(bgr, grid=cfg.grid, border_ratio=cfg.border_ratio)
+        model.tile_sigma = tile_sigma(bgr, model, cfg.grid)
+        z = normalized_residual(bgr, model)
+        h, w = z.shape[:2]
+        short = min(h, w)
+        residual = np.clip(z * 32, 0, 255).astype(np.uint8)
+        if float(z.max()) < cfg.sigma_k:
+            return np.zeros((h, w), np.uint8), residual
+        zu = np.clip(z * 16, 0, 255).astype(np.uint8)
+        thr_otsu, _ = cv2.threshold(zu, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        thr = max(cfg.sigma_k * 16, float(thr_otsu))
+        mask = np.where(zu >= thr, 255, 0).astype(np.uint8)
 
     k_open = _odd(short * cfg.open_ratio)
     k_close = _odd(short * cfg.close_ratio)
@@ -260,14 +275,16 @@ def extract_objects(
     bgr: np.ndarray,
     cfg: SceneConfig | None = None,
     split: bool = True,
+    plate: np.ndarray | None = None,
 ) -> tuple[list[dict], np.ndarray, np.ndarray]:
     """检测纸币与硬币候选，返回 (objects, mask, residual)。
 
     objects 每项含 kind / contour / bbox / mask / area_ratio / 几何量。
+    传入 plate 时改用背景板差分。
     """
     cfg = cfg or SceneConfig()
     h, w = bgr.shape[:2]
-    mask, residual = foreground_mask(bgr, cfg)
+    mask, residual = foreground_mask(bgr, cfg, plate=plate)
 
     n, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
     objects: list[dict] = []

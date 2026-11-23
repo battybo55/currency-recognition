@@ -134,3 +134,59 @@ def normalized_residual(bgr: np.ndarray, model: BackgroundModel) -> np.ndarray:
     gy, gx = model.tile_sigma.shape
     sig = cv2.resize(model.tile_sigma, (w, h), interpolation=cv2.INTER_LINEAR)
     return res / np.maximum(sig, 1e-3)
+
+
+# ---------------------------------------------------------------------------
+# 多帧背景板：同机位拍摄时的统计背景
+# ---------------------------------------------------------------------------
+
+
+def _normalize_lab(lab: np.ndarray, own: np.ndarray, ref: np.ndarray) -> np.ndarray:
+    """把一帧的 Lab 归一化到参考背景色：L 用增益，a/b 用偏移。"""
+    out = lab.astype(np.float32).copy()
+    out[..., 0] *= float(ref[0]) / max(float(own[0]), 1e-3)
+    out[..., 1] += float(ref[1]) - float(own[1])
+    out[..., 2] += float(ref[2]) - float(own[2])
+    return np.clip(out, 0, 255)
+
+
+def build_plate(frames: list[np.ndarray], coverage_std: float = 12.0):
+    """由同机位多帧构建背景板。
+
+    返回 (plate_bgr, coverage, std_map)：
+      plate     —— 逐像素中值（已做光度归一化）
+      coverage  —— 时间标准差小于阈值的像素占比，代表背景板可信程度
+      std_map   —— 每像素的时间标准差，可用于掩掉不可信区域
+
+    注意：**必须先把各帧曝光/白平衡对齐**，否则手机自动曝光会让中值全是重影；
+    另外每块区域至少要有一半以上的帧是空的，覆盖不足时中值会保留目标。
+    """
+    if not frames:
+        raise ValueError("no frames")
+
+    labs, ref = [], None
+    for f in frames:
+        model = detect_background(f)
+        own = model.colors[0]
+        if ref is None:
+            ref = own
+        lab = cv2.cvtColor(f, cv2.COLOR_BGR2LAB).astype(np.float32)
+        labs.append(_normalize_lab(lab, own, ref))
+
+    stack = np.stack(labs)
+    med = np.median(stack, axis=0)
+    std_map = stack.std(axis=0).mean(axis=2)
+    coverage = float((std_map < coverage_std).mean())
+    plate = cv2.cvtColor(np.clip(med, 0, 255).astype(np.uint8), cv2.COLOR_LAB2BGR)
+    return plate, coverage, std_map
+
+
+def residual_against_plate(bgr: np.ndarray, plate: np.ndarray) -> np.ndarray:
+    """与背景板的 Lab 距离；两者先按各自背景色对齐，抵消曝光差异。"""
+    m_img = detect_background(bgr)
+    m_plate = detect_background(plate)
+    lab_i = _normalize_lab(cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB).astype(np.float32),
+                           m_img.colors[0], m_plate.colors[0])
+    lab_p = cv2.cvtColor(plate, cv2.COLOR_BGR2LAB).astype(np.float32)
+    d = np.linalg.norm(lab_i - lab_p, axis=2)
+    return d.astype(np.float32)
