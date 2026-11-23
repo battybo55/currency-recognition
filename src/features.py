@@ -76,3 +76,65 @@ def shape_features(quad: np.ndarray | None, image_shape: tuple[int, int]) -> np.
         cosv = np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-6)
         dev += abs(np.degrees(np.arccos(np.clip(cosv, -1, 1))) - 90.0)
     return np.array([aspect / 3.0, area, dev / 4.0 / 90.0, 1.0], dtype=np.float32)
+
+
+_GABOR_CACHE: dict[tuple, list[np.ndarray]] = {}
+
+
+def _gabor_bank(scales: int = 4, orientations: int = 6, ksize: int = 31) -> list[np.ndarray]:
+    key = (scales, orientations, ksize)
+    if key in _GABOR_CACHE:
+        return _GABOR_CACHE[key]
+    kernels = []
+    for s in range(scales):
+        sigma = 3.0 * (1.3**s)
+        lambd = 9.0 * (1.7**s)
+        for o in range(orientations):
+            theta = o * np.pi / orientations
+            k = cv2.getGaborKernel((ksize, ksize), sigma, theta, lambd, 0.5, 0.0, ktype=cv2.CV_32F)
+            k -= k.mean()
+            kernels.append(k)
+    _GABOR_CACHE[key] = kernels
+    return kernels
+
+
+def gabor_features(
+    bgr: np.ndarray,
+    scales: int = 4,
+    orientations: int = 6,
+    size=(256, 128),
+) -> np.ndarray:
+    """Gabor 滤波器组的响应均值与标准差（每个核两个标量）。
+
+    先把图缩到固定小尺寸，既控制耗时，也避免不同原图分辨率带来的量纲差。
+    """
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY) if bgr.ndim == 3 else bgr
+    gray = cv2.resize(gray, size, interpolation=cv2.INTER_AREA).astype(np.float32) / 255.0
+    feats = []
+    for k in _gabor_bank(scales, orientations):
+        resp = cv2.filter2D(gray, cv2.CV_32F, k)
+        feats.append(resp.mean())
+        feats.append(resp.std())
+    return np.asarray(feats, dtype=np.float32)
+
+
+def frequency_features(bgr: np.ndarray, bins: int = 16, dct_ratio: float = 0.2) -> np.ndarray:
+    """DFT 径向能量谱分箱 + DCT 低频能量占比。"""
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY) if bgr.ndim == 3 else bgr
+    small = cv2.resize(gray, (128, 128), interpolation=cv2.INTER_AREA).astype(np.float32) / 255.0
+
+    spec = np.abs(np.fft.fftshift(np.fft.fft2(small)))
+    h, w = spec.shape
+    yy, xx = np.mgrid[0:h, 0:w]
+    radius = np.hypot(yy - h / 2, xx - w / 2)
+    rmax = radius.max()
+    idx = np.clip((radius / rmax * bins).astype(int), 0, bins - 1)
+    radial = np.bincount(idx.ravel(), weights=spec.ravel(), minlength=bins).astype(np.float32)
+    radial /= radial.sum() + 1e-8
+
+    dct = cv2.dct(small)
+    kh, kw = max(1, int(h * dct_ratio)), max(1, int(w * dct_ratio))
+    low = float(np.sum(np.abs(dct[:kh, :kw])))
+    total = float(np.sum(np.abs(dct))) + 1e-8
+
+    return np.concatenate([radial, np.array([low / total], np.float32)]).astype(np.float32)

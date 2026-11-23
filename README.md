@@ -107,7 +107,8 @@ python scripts/run_all.py --config configs/baseline.yaml
 | E0 纸币基线（整图 + 颜色 + LBP） | DS04 Indian / 200 张，7:3 划分 | accuracy / macro-F1 | **0.964 / 0.960** | 无分割、无校正 |
 | E2 纸币（四角校正 + 颜色 + LBP） | 同上 | accuracy / macro-F1 | 0.946 / 0.940 | 定位成功 68.5%，失败回退整图 |
 | E2 纸币分割对比 | 待填 | macro-F1 | 待填 | Otsu / 自适应 / Canny |
-| E4 特征消融 | 待填 | macro-F1 | 待填 | 逐族累加 |
+| E4 特征消融 | DS04 Indian / 400 张，5 折 | accuracy | 颜色 0.975；颜色+四族 0.965 | 累加无增益，颜色已近饱和 |
+| E5 分类器对比 | 同上，203 维 | accuracy | LR 0.980 / RF 0.975 / SVM 0.965 / kNN 0.948 | 差异小于特征族差异 |
 | E6 鲁棒性切片 | 待填 | macro-F1 | 待填 | 按光照/角度/重叠率 |
 | 端到端金额 | 待填 | 完全正确率 | 待填 | 钞币混排 |
 
