@@ -50,11 +50,89 @@ def iou(a: np.ndarray, b: np.ndarray) -> float:
     return inter / union if union else 1.0
 
 
-def postprocess(prob: np.ndarray, thr: float = 0.5, close: int = 5) -> np.ndarray:
+def split_instances(mask: np.ndarray, min_distance_ratio: float = 0.05,
+                    threshold_rel: float = 0.08) -> np.ndarray:
+    """距离变换 + 峰值分水岭，把粘连的目标拆开。
+
+    只对「厚度足够」的区域拆：硬币与纸币的尺度差很大，用相对短边的
+    最小间距只能取一个折中值，参数在 15 张标注图上选定（小样本，需谨慎外推）。
+    """
+    from skimage.feature import peak_local_max
+    from skimage.segmentation import watershed
+
+    if mask.sum() == 0:
+        return mask
+    dist = cv2.distanceTransform(mask, cv2.DIST_L2, 5)
+    if float(dist.max()) < 3:
+        return mask
+    md = max(3, int(min(mask.shape[:2]) * min_distance_ratio))
+    coords = peak_local_max(dist, min_distance=md, threshold_rel=threshold_rel, exclude_border=False)
+    if len(coords) <= 1:
+        return mask
+    markers = np.zeros_like(mask, dtype=np.int32)
+    for i, (r, c) in enumerate(coords, 1):
+        markers[r, c] = i
+    labels = watershed(-dist, markers, mask=mask)
+    out = np.zeros_like(mask)
+    for lab in range(1, int(labels.max()) + 1):
+        part = (labels == lab).astype(np.uint8)
+        if part.sum() / mask.size > 0.0015:
+            out = np.maximum(out, part)
+    return out
+
+
+def color_split(mask: np.ndarray, img: np.ndarray, min_each: float = 0.22,
+                min_de: float = 14.0, max_area: float = 0.45) -> np.ndarray:
+    """对「面积偏大」的连通域做 Lab 二聚类，色差显著时按主色切开。
+
+    针对「10 元叠 100 元」这类跨面额粘连——它们没有几何颈部，距离变换分不开，
+    但主色差异很大。同面额叠放仍然无法拆开，这是方法的边界。
+    """
+    from sklearn.cluster import KMeans
+
+    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB).astype(np.float32)
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
+    out = np.zeros_like(mask)
+    for i in range(1, n):
+        comp = labels == i
+        area = int(comp.sum())
+        if area / mask.size < 0.002:
+            continue
+        if area / mask.size > max_area:
+            out = np.maximum(out, comp.astype(np.uint8))
+            continue
+        ys, xs = np.nonzero(comp)
+        pts = lab[ys, xs]
+        if len(pts) < 200:
+            out[ys, xs] = 1
+            continue
+        km = KMeans(n_clusters=2, n_init=5, random_state=0).fit(pts)
+        de = float(np.linalg.norm(km.cluster_centers_[0] - km.cluster_centers_[1]))
+        parts = []
+        for c in range(2):
+            sel = km.labels_ == c
+            m = np.zeros_like(mask)
+            m[ys[sel], xs[sel]] = 1
+            parts.append(m)
+        if de >= min_de and min(p.sum() for p in parts) >= min_each * area:
+            out = np.maximum(out, parts[0])
+            out = np.maximum(out, parts[1])
+        else:
+            out[ys, xs] = 1
+    return out
+
+
+def postprocess(prob: np.ndarray, thr: float = 0.5, close: int = 5, split: bool = False,
+                min_dist: float = 0.05, img: np.ndarray | None = None,
+                csplit: bool = False) -> np.ndarray:
     m = (prob > thr * 255).astype(np.uint8)
     m = cv2.morphologyEx(m, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
     if close > 1:
         m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, np.ones((close, close), np.uint8))
+    if split:
+        m = split_instances(m, min_dist)
+    if csplit and img is not None:
+        m = color_split(m, img)
     return m
 
 
@@ -67,6 +145,9 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--folds", type=int, default=5)
     ap.add_argument("--max-each", type=int, default=6000)
+    ap.add_argument("--split", action="store_true", help="对粘连区域做分水岭拆分")
+    ap.add_argument("--min-dist", type=float, default=0.05)
+    ap.add_argument("--color-split", action="store_true", help="按 Lab 主色拆分大团块")
     args = ap.parse_args()
 
     labels = json.loads(LABELS.read_text(encoding="utf-8"))
@@ -105,7 +186,8 @@ def main() -> None:
         for s in test:
             img, gt = data[s]
             prob = predict_map(clf, img, detect_background(img))
-            pred = postprocess(prob)
+            pred = postprocess(prob, split=args.split, min_dist=args.min_dist,
+                               img=img, csplit=args.color_split)
             base_objs, base_mask, _ = extract_objects(img, SceneConfig())
             base = (base_mask > 127).astype(np.uint8)
 
